@@ -1,0 +1,78 @@
+"""Genere Layout.h (repere 1175 x 900 unites = fond 2350 x 1800 px / 2) depuis export/layout.json (tools/make_art.py --fond)."""
+import json, os, sys
+HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(HERE)
+L = json.load(open(os.path.join(ROOT, 'export', 'layout.json')))
+P = L['pos']
+out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'export', 'Layout.h')
+
+def f(v): return f'{float(v):.3f}f'
+def pt(p): return '{ ' + f(p[0]) + ', ' + f(p[1]) + ' }'
+def rect(r): return '{ ' + ', '.join(f(v) for v in r) + ' }'
+def col(c): return '0xff%02x%02x%02x' % tuple(int(v) for v in c[:3])
+def cstr(s): return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+o = []
+o.append('// genere par tools/gen_layout.py depuis tools/make_art.py - ne pas modifier a la main')
+o.append('// repere 1175 x 900 unites = fond 2350 x 1800 px / 2 (format double plein cadre)')
+o.append('#pragma once\n#include <juce_graphics/juce_graphics.h>\nnamespace layout\n{')
+o.append(f'    constexpr float frameW = {f(L["frame"][0])}, frameH = {f(L["frame"][1])};')
+o.append('    // modules : 0 synth, 1 distortion, 2 modulation, 3 ring mod, 4 bitcrush, 5 gated reverb (3-5 reordonnables)')
+o.append('    const float modX[6] = { ' + ', '.join(f(v) for v in L['modX']) + ' };')
+o.append('    const float modW[6] = { ' + ', '.join(f(v) for v in L['modW']) + ' };')
+o.append('    const float modC[6] = { ' + ', '.join(f(v) for v in L['modC']) + ' };')
+o.append(f'    constexpr float modY0 = {f(P["modY"][0])}, modY1 = {f(P["modY"][1])}, gap = {f(P["gap"])};')
+o.append('    const juce::Rectangle<float> columnRect[3] = { ' + ', '.join(rect(r) for r in P['crops']) + ' };   // decoupes column3/4/5.png')
+o.append('    struct Knob { const char* id; float x, y, r, size; };')
+o.append('    const Knob knobs[] = {')
+for k in L['knobs']: o.append(f'        {{ {cstr(k["id"])}, {f(k["x"])}, {f(k["y"])}, {f(k["r"])}, {f(k["size"])} }},')
+o.append('    };')
+o.append(f'    constexpr int numKnobs = {len(L["knobs"])};')
+o.append('    // serigraphie : police 0 = Poppins Bold, 1 = Poppins Medium ; anchor 0 centre, 1 gauche, 2 droite ; mod = colonne qui la porte (-1 fixe)')
+o.append('    struct Txt { const char* s; float em, x, y, track; juce::uint32 col; int font, anchor, mod; float rot, sy; bool ink; };   // sy : etirement vertical du glyphe ; ink : centre sur le trace')
+o.append('    const Txt texts[] = {')
+for t in L['texts']:
+    fnt = 1 if 'Medium' in t.get('font', '') else 0
+    anc = {'mm': 0, 'lm': 1, 'rm': 2}.get(t.get('anchor', 'mm'), 0)
+    o.append(f'        {{ {cstr(t["s"])}, {f(t["em"])}, {f(t["x"])}, {f(t["y"])}, {f(t["track"])}, {col(t["col"])}, {fnt}, {anc}, {t.get("mod", -1)}, {f(t.get("rot", 0))}, {f(t.get("sy", 1.0))}, {"true" if t.get("ink") else "false"} }},')
+o.append('    };')
+o.append('    struct Line { float x0, y0, x1, y1, w; juce::uint32 col; int mod; };')
+o.append('    const Line lines[] = {')
+for l in L['prim']['lines']: o.append(f'        {{ {f(l["x0"])}, {f(l["y0"])}, {f(l["x1"])}, {f(l["y1"])}, {f(l["w"])}, {col(l["col"])}, {l["mod"]} }},')
+o.append('    };')
+o.append('    struct Dot { float x, y, r; juce::uint32 col; int mod; };')
+o.append('    const Dot dots[] = {')
+for d in L['prim']['dots']: o.append(f'        {{ {f(d["x"])}, {f(d["y"])}, {f(d["r"])}, {col(d["col"])}, {d["mod"]} }},')
+o.append('    };')
+o.append('    struct Poly { float p[8]; juce::uint32 col; };')
+o.append('    const Poly polys[] = {')
+for d in L['prim']['polys']: o.append('        { { ' + ', '.join(f(v) for v in d['p']) + f' }}, {col(d["col"])} }},')
+o.append('    };')
+o.append('    struct Frame { float x0, y0, x1, y1, rad, w; juce::uint32 col; bool hasGap; float gx, gy, gw, gh; };')
+o.append('    const Frame frames[] = {')
+for d in L['prim']['frames']:
+    g = d['gap'] or [0, 0, 0, 0]
+    o.append('        { ' + ', '.join(f(v) for v in d['r']) + f', {f(d["rad"])}, {f(d["w"])}, {col(d["col"])}, {"true" if d["gap"] else "false"}, ' + ', '.join(f(v) for v in g) + ' },')
+o.append('    };')
+o.append('    // touches ENGINE SELECT (deep, vintage, solo, strings, harmony) et MODE (soft, hard, rich, wavefold)')
+o.append('    const juce::Point<float> engPos[5] = { ' + ', '.join(pt(p) for p in P['engPos']) + ' };')
+o.append('    const char* const engNames[5] = { ' + ', '.join(cstr(s) for s in P['engNames']) + ' };')
+o.append(f'    constexpr float keyW = {f(P["keyW"])}, keyH = {f(P["keyH"])}, keySprW = {f(P["sprites"]["keyEng"][0])}, keySprH = {f(P["sprites"]["keyEng"][1])};')
+o.append(f'    constexpr float modeX = {f(P["modeX"])}, modeW = {f(P["modeW"])}, modeH = {f(P["modeH"])}, modeSprW = {f(P["sprites"]["keyMode"][0])}, modeSprH = {f(P["sprites"]["keyMode"][1])};')
+o.append('    const float modeY[4] = { ' + ', '.join(f(v) for v in P['modeY']) + ' };')
+o.append('    const char* const modeNames[4] = { ' + ', '.join(cstr(s) for s in P['modeNames']) + ' };')
+o.append('    const juce::Point<float> ppPos[2] = { ' + ', '.join(pt(p) for p in P['ppPos']) + ' };   // PRE, POST')
+o.append(f'    constexpr float ppW = {f(P["ppW"])}, ppH = {f(P["ppH"])}, ppSprW = {f(P["sprites"]["swPP"][0])}, ppSprH = {f(P["sprites"]["swPP"][1])};')
+o.append(f'    constexpr float onY = {f(P["onY"])}, onW = {f(P["onW"])}, onH = {f(P["onH"])}, onSprW = {f(P["sprites"]["swOn"][0])}, onSprH = {f(P["sprites"]["swOn"][1])};')
+o.append('    const float intRows[2] = { ' + ', '.join(f(v) for v in P['intRows']) + ' };')
+o.append(f'    constexpr float intX0 = {f(P["intDisp"][0])}, intX1 = {f(P["intDisp"][1])}, intH = 22.0f, intArrowDx = 16.0f;')
+o.append(f'    const juce::Point<float> saveC {pt(P["saveC"])}, delC {pt(P["delC"])};')
+o.append(f'    const juce::Rectangle<float> presetRect {rect(P["preset"])};   // pastille unique barre de presets / ligne d\'etat (400 x 38)')
+o.append('    constexpr float presetFont = 23.0f;')
+o.append('    const float masterX[3] = { ' + ', '.join(f(v) for v in P['master']) + f' }}; constexpr float masterY = {f(P["masterY"])}, masterR = {f(P["masterR"])};')
+o.append(f'    const juce::Point<float> ledIn {pt(P["ledIn"])}, ledOut {pt(P["ledOut"])};')
+o.append(f'    const juce::Point<float> fsPos {pt(P["fs"])}; constexpr float fsBtnR = {f(P["fsBtnR"])}, fsReflS = {f(P["sprites"]["fsRefl"])};')
+o.append(f'    const juce::Point<float> logoC {pt(P["logoC"])}; constexpr float logoW = {f(P["logoW"])};')
+o.append(f'    constexpr float titleY = {f(P["titleY"])};')
+o.append('}')
+open(out, 'w').write('\n'.join(o) + '\n')
+print('ecrit', out, len(L['texts']), 'textes', len(L['prim']['lines']), 'traits')

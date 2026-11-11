@@ -1,0 +1,82 @@
+name: Build Synthetika VST3
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Upload VST3 (Windows)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Synthetika-VST3-Windows
+          path: build/Synthetika_artefacts/Release/VST3/
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-15-intel   # Mac Intel : file Apple Silicon saturee (binaire universel quand meme)
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure (binaire universel Intel + Apple Silicon)
+        run: cmake -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Signature locale (ad hoc) et archive
+        run: |
+          cd "build/Synthetika_artefacts/Release/VST3"
+          xattr -cr "Synthetika.vst3"
+          codesign --force --deep --sign - "Synthetika.vst3"
+          codesign --verify --deep --strict "Synthetika.vst3"
+          ditto -c -k --sequesterRsrc --keepParent "Synthetika.vst3" "$GITHUB_WORKSPACE/Synthetika-VST3-macOS.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Synthetika-VST3-macOS
+          path: Synthetika-VST3-macOS.zip
+          if-no-files-found: error
+
+  # Publie la version (tag v<VERSION de CMakeLists>) en Release GitHub, fichiers a nom fixe :
+  # les liens .../releases/latest/download/Synthetika-VST3-<OS>.zip du README suivent chaque version.
+  release:
+    if: github.ref == 'refs/heads/main'
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Version
+        id: v
+        run: echo "version=$(sed -n 's/^project([A-Za-z0-9_]* VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Archives
+        run: |
+          (cd dist/Synthetika-VST3-Windows && zip -r -q "$GITHUB_WORKSPACE/Synthetika-VST3-Windows.zip" Synthetika.vst3)
+          cp dist/Synthetika-VST3-macOS/Synthetika-VST3-macOS.zip .
+      - name: Notice
+        run: |
+          # derniere notice du dossier docs/ (hors guide MIDI), publiee sous un nom fixe
+          N=$(ls docs/*.pdf 2>/dev/null | grep -vi midi | sort -V | tail -1 || true)
+          if [ -n "$N" ]; then cp "$N" Synthetika-Notice.pdf; echo "notice : $N"; else echo "pas de notice"; fi
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ steps.v.outputs.version }}"
+          FILES="Synthetika-VST3-Windows.zip Synthetika-VST3-macOS.zip"
+          [ -f Synthetika-Notice.pdf ] && FILES="$FILES Synthetika-Notice.pdf"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" $FILES --clobber
+          else
+            gh release create "$TAG" $FILES --target "$GITHUB_SHA" --latest \
+              --title "Synthetika $TAG" \
+              --notes "Windows : copier Synthetika.vst3 dans C:\\Program Files\\Common Files\\VST3\\. macOS : copier Synthetika.vst3 dans ~/Library/Audio/Plug-Ins/VST3/."
+          fi

@@ -1,0 +1,29 @@
+# Publie la derniere notice (docs/*.pdf, hors guide MIDI) dans la derniere Release, sous le nom fixe Synthetika-Notice.pdf :
+# le bouton « Notice » du README (.../releases/latest/download/Synthetika-Notice.pdf) suit chaque mise a jour de la notice,
+# sans recompiler le plugin.
+name: Notice
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'docs/**.pdf', '.github/workflows/notice.yml' ]
+  workflow_dispatch:
+
+jobs:
+  notice:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Publier la notice
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          N=$(ls docs/*.pdf 2>/dev/null | grep -vi midi | sort -V | tail -1 || true)
+          [ -n "$N" ] || { echo "pas de notice"; exit 0; }
+          TAG=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
+          [ -n "$TAG" ] || { echo "pas encore de Release : la notice sera publiee au prochain build"; exit 0; }
+          cp "$N" Synthetika-Notice.pdf
+          gh release upload "$TAG" Synthetika-Notice.pdf --clobber
+          echo "$N -> $TAG/Synthetika-Notice.pdf"

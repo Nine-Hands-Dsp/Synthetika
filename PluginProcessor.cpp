@@ -310,7 +310,10 @@ void SynthetikaProcessor::processBlock (AudioBuffer<float>& buffer, MidiBuffer& 
     ScopedNoDenormals noDenormals;
     const int n = buffer.getNumSamples();
     handleMidi (midi);
-    for (int c = getTotalNumInputChannels(); c < getTotalNumOutputChannels(); ++c) buffer.clear (c, 0, n);
+    // entree mono, sortie stereo : la guitare va dans les deux canaux (pas de perte de 6 dB, bypass identique)
+    const int nIn = getTotalNumInputChannels();
+    if (nIn == 1 && buffer.getNumChannels() > 1) buffer.copyFrom (1, 0, buffer, 0, 0, n);
+    for (int c = jmax (nIn, nIn == 1 ? 2 : nIn); c < getTotalNumOutputChannels(); ++c) buffer.clear (c, 0, n);
     if (n == 0) return;
 
     // rampes MIDI : avancent au rythme des blocs

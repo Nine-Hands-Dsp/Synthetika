@@ -15,7 +15,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHOTS = sys.argv[1]
 OUT = sys.argv[2]
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 TMP = os.path.join(os.path.dirname(os.path.abspath(OUT)), "_notice_tmp"); os.makedirs(TMP, exist_ok=True)
 ASSETS = os.path.join(ROOT, "tools", "manual_assets")
 FONTS = os.path.join(ASSETS, "fonts")
@@ -207,7 +207,7 @@ def story():
     tech = [["Format", "VST3 (Windows 64 bits, macOS universel Apple Silicon + Intel)"], ["Canaux", "entrée mono ou stéréo, sortie stéréo (ou mono)"],
             ["Suivi", "monophonique, YIN décimé à fenêtre adaptée + affinage à pleine résolution, de 28 Hz à 1,6 kHz, analyse toutes les 1,5 ms ; détection d'attaque ; nouvelle note ≈ 10 ms (plus dans le grave)"],
             ["Moteurs", "Deep, Vintage, Solo, Strings, Harmony (2 intervalles −24 à +24, le 2e coupable)"],
-            ["Effets", "Distortion 4 modes pré / post · Modulation ±32 cents · Ring Mod 20 Hz – 5 kHz · Bitcrush 44,1 kHz – 441 Hz, 24 – 1 bit · Gated Reverb 0 – 1000 ms ; ordre réglable"],
+            ["Effets", "Distortion 4 modes pré / post suréchantillonnée x4 · Modulation ±32 cents · Ring Mod 20 Hz – 5 kHz · Bitcrush 44,1 kHz – 441 Hz, 24 – 1 bit · Gated Reverb 0 – 1000 ms ; ordre réglable"],
             ["Presets", "14 d'usine, presets utilisateur en fichiers .preset"],
             ["MIDI", "MIDI Learn sur les 26 commandes (rien d'assigné par défaut), Program Change 1-14"],
             ["Fenêtre", "100 % (taille minimale) / 125 % / 150 % / 200 % ; Glow 25 à 100 % ; anti-gel v2 sous Windows"]]

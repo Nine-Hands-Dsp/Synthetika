@@ -48,8 +48,8 @@ public:
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
     static constexpr float baseW = layout::frameW, baseH = layout::frameH;
-    static constexpr int defaultH = 495, refH = 743, maxH = 1114;     // format double : hauteur de Ring Think (« 60 % »)
-    static constexpr int numSizes = 3;
+    static constexpr int defaultH = 495, maxH = 990;     // format double : hauteur de Ring Think = taille par defaut « 100 % », jusqu'a 200 %
+    static constexpr int numSizes = 4;          // 100 % (defaut) / 125 % / 150 % / 200 %
     static int sizeHeight (int idx);
     void setScaledHeight (int h);
     void forceRenderScale (float sc) { forcedScale = sc; rebuildCaches (sc); }

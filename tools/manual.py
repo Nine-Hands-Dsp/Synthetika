@@ -15,7 +15,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHOTS = sys.argv[1]
 OUT = sys.argv[2]
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 TMP = os.path.join(os.path.dirname(os.path.abspath(OUT)), "_notice_tmp"); os.makedirs(TMP, exist_ok=True)
 ASSETS = os.path.join(ROOT, "tools", "manual_assets")
 FONTS = os.path.join(ASSETS, "fonts")
@@ -189,7 +189,7 @@ def story():
                   "<b>MIDI Learn</b> : aucune commande n'a de CC par défaut. Clic droit sur un potard, une touche, un interrupteur ou le footswitch &gt; <b>MIDI Learn</b>, puis bougez la pédale d'expression ou appuyez sur le bouton MIDI ; la barre confirme (ex. <i>SYNTH MIX = CC 11</i>). <b>Clear MIDI</b> retire une assignation, clic droit &gt; MIDI &gt; <b>Clear all MIDI assignments</b> les retire toutes.",
                   "Pédale d'expression sans saccades (rampe entre deux messages, course de la pédale apprise, zones mortes aux butées, CC 14 bits accepté). Footswitch MIDI à accrochage (127 / 0) ou momentané : clic droit &gt; Settings.",
                   "<b>Program Change</b> 1 à 14 : charge les presets d'usine. Tous les paramètres sont automatisables dans le DAW.",
-                  "<b>Fenêtre</b> : s'ouvre à « 60 % » (hauteur de Ring Think) et ne peut jamais être plus petite ; clic droit &gt; <b>Plugin size</b> : 60 / 75 / 100 %, <b>Default size (new windows)</b> pour la taille d'ouverture ; tirer le coin agrandit jusqu'à 150 % (proportions conservées).",
+                  "<b>Fenêtre</b> : s'ouvre à « 100 % » (hauteur de Ring Think) et ne peut jamais être plus petite ; clic droit &gt; <b>Plugin size</b> : 100 / 125 / 150 / 200 %, <b>Default size (new windows)</b> pour la taille d'ouverture ; tirer le coin agrandit jusqu'à 200 % (proportions conservées).",
                   "<b>Ligne d'état</b> : dès qu'un réglage bouge, la pastille de presets affiche la valeur en direct (ex. <i>REVERB TIME 380 MS</i>) puis revient au preset 2,5 s plus tard ; un clic la fait revenir tout de suite."])
     f.append(P("8. Presets", "h1"))
     f.append(P("Flèches de la barre : preset précédent / suivant (presets d'usine puis presets utilisateur). Clic sur le nom : liste de tous les presets. <b>Enregistrer</b> ouvre une fenêtre pour nommer le preset ; un nom déjà pris demande confirmation, enregistrer sous le nom d'un preset d'usine crée votre copie et <i>Default</i> est réservé. <b>Supprimer</b> demande confirmation et ne touche jamais aux presets d'usine. Un astérisque après le nom signale un preset modifié."))
@@ -209,7 +209,7 @@ def story():
             ["Effets", "Distortion 4 modes pré / post · Modulation ±32 cents · Ring Mod 20 Hz – 5 kHz · Bitcrush 44,1 kHz – 441 Hz, 24 – 1 bit · Gated Reverb 0 – 1000 ms ; ordre réglable"],
             ["Presets", "14 d'usine, presets utilisateur en fichiers .preset"],
             ["MIDI", "MIDI Learn sur les 26 commandes (rien d'assigné par défaut), Program Change 1-14"],
-            ["Fenêtre", "60 % (taille minimale) / 75 % / 100 %, jusqu'à 150 % ; Glow 25 à 100 % ; anti-gel v2 sous Windows"]]
+            ["Fenêtre", "100 % (taille minimale) / 125 % / 150 % / 200 % ; Glow 25 à 100 % ; anti-gel v2 sous Windows"]]
     f.append(KeepTogether([P("10. Caractéristiques techniques", "h1"), table(tech, [26 * mm, W - 26 * mm], header=False, small=True)]))
     return f
 

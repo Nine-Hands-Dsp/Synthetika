@@ -52,7 +52,7 @@ Windows 11 et macOS (binaire universel).
 - Barre de presets / ligne d'état (pastille unique), enregistrer / supprimer les presets utilisateur
   (`Nine Hands DSP/Synthetika/User Presets/*.preset`, « Default » réservé, presets d'usine non supprimables).
 - Footswitch BYPASS : anneau rose dans la gorge (comme Octopus) ; l'arc-en-ciel s'allume quand la pédale est active.
-- Clic droit (menus d'Octopus, ouverts là où on clique) : MIDI Learn de chaque commande, taille (60 / 75 / 100 %), Glow, presets, ordre.
+- Clic droit (menus d'Octopus, ouverts là où on clique) : MIDI Learn de chaque commande, taille (100 % par défaut, 125 / 150 / 200 %), Glow, presets, ordre.
 - MIDI : aucun CC par défaut, tout passe par le MIDI Learn ; pédale d'expression sans saccades (rampe, course apprise, CC 14 bits) ;
   footswitch MIDI à accrochage ou momentané ; Program Change = presets d'usine.
 - Anti-gel v2 : rendu logiciel sous Windows, caches reconstruits par le timer, aucun appel à l'hôte depuis le thread audio.
@@ -67,4 +67,5 @@ Windows 11 et macOS (binaire universel).
 
 | Version | Changements |
 |---|---|
+| 1.0.1 | Tailles de fenêtre : 100 % (défaut), 125 %, 150 %, 200 %. |
 | 1.0.0 | Première version : 5 moteurs, 6 modules, ordre réordonnable, 14 presets d'usine, presets utilisateur, MIDI Learn, anti-gel v2. |

@@ -182,7 +182,7 @@ SynthetikaEditor::~SynthetikaEditor()
 
 int SynthetikaEditor::sizeHeight (int idx)
 {
-    const int h[numSizes] = { defaultH, roundToInt (refH * 0.75f), refH };
+    const int h[numSizes] = { defaultH, roundToInt (defaultH * 1.25f), roundToInt (defaultH * 1.5f), defaultH * 2 };
     return h[jlimit (0, numSizes - 1, idx)];
 }
 
@@ -939,7 +939,7 @@ void SynthetikaEditor::showContextMenu (int learnIdx)
         menu.addSeparator();
     }
     PopupMenu sizes, defSizes;
-    const char* names[numSizes] = { "60 %", "75 %", "100 %" };
+    const char* names[numSizes] = { "100 %", "125 %", "150 %", "200 %" };
     const int def = WigaWindowSize::defaultIndex (JucePlugin_Name, numSizes);
     for (int i = 0; i < numSizes; ++i)
     {

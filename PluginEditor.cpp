@@ -858,7 +858,8 @@ void SynthetikaEditor::openDrum (int which)
     drum = std::make_unique<DrumSelector> (c->choices, c->getIndex(), anchor, amber, medFace,
                                            [this, idStr] (int idx) { setChoice (idStr.toRawUTF8(), idx); });
     drum->unit = s;
-    drum->onClose = [this] { MessageManager::callAsync ([safe = Component::SafePointer<SynthetikaEditor> (this)] { if (safe != nullptr) { safe->drum.reset(); safe->repaint(); } }); };
+    Component::SafePointer<SynthetikaEditor> safeEd (this);
+    drum->onClose = [safeEd] { MessageManager::callAsync ([safeEd] { if (auto* ed = safeEd.getComponent()) { ed->drum.reset(); ed->repaint(); } }); };
     drum->setBounds (getLocalBounds());
     addAndMakeVisible (*drum);
     drum->grabKeyboardFocus();

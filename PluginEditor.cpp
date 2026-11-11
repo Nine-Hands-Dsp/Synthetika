@@ -464,14 +464,14 @@ void SynthetikaEditor::drawEmblem (Graphics& g)
     const Colour off (0xff34333a);
     if (lv > 0.003f)
         for (const auto& b : emblem)
-            for (float w : { 14.0f, 10.0f, 6.5f, 3.5f })
+            for (float w : { 22.0f, 17.0f, 13.0f, 9.5f, 6.5f, 3.5f })
             {
-                g.setColour (b.col.withAlpha (0.055f * lv * glow));
+                g.setColour (b.col.withAlpha (0.06f * lv * glow));
                 g.strokePath (b.path, PathStrokeType (w, PathStrokeType::curved, PathStrokeType::rounded));
             }
     for (const auto& b : emblem)
     {
-        g.setColour (off.interpolatedWith (b.col, 0.22f + 0.78f * lv));
+        g.setColour (off.interpolatedWith (b.col, 0.38f + 0.62f * lv));   // eteint : couleurs sourdes mais lisibles
         g.fillPath (b.path);
     }
 }

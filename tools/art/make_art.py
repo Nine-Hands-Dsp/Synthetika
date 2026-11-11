@@ -21,7 +21,7 @@ W, H = int(FW * AS), int(FH * AS)
 yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
 
 # ------------------------------------------------------------------ geometrie (unites)
-JACK_L = 124.0 * 0.8                # embases reduites de 20 % (demande de l'utilisateur)
+JACK_L = 124.0 * 0.8 * 0.8          # embases reduites deux fois de 20 % (demandes de l'utilisateur)
 JACK_P = JACK_L * 108 / 512
 BX0, BX1 = JACK_P - 1.5, FW - JACK_P + 1.5
 R_PL = 10.0                          # rayon des plaques

@@ -166,9 +166,12 @@ SynthetikaEditor::SynthetikaEditor (SynthetikaProcessor& p)
     setResizeLimits (defaultW, defaultH, roundToInt ((float) maxH * baseW / baseH), maxH);
     if (auto* c = getConstrainer()) c->setFixedAspectRatio ((double) baseW / (double) baseH);
     setOpaque (true);
-    setSize (defaultW, defaultH);
+    // taille a la reouverture : celle de cette instance si elle a deja ete ouverte, sinon la taille par defaut choisie
+    // (lue AVANT le premier setSize, qui passe par resized() et ecraserait la valeur memorisee)
     const int saved = proc.uiHeight.load();
-    setScaledHeight (saved > 0 ? saved : sizeHeight (WigaWindowSize::defaultIndex (JucePlugin_Name, numSizes)));
+    const int startH = saved > 0 ? saved : sizeHeight (WigaWindowSize::defaultIndex (JucePlugin_Name, numSizes));
+    setSize (roundToInt ((float) jlimit (defaultH, maxH, startH) * baseW / baseH), jlimit (defaultH, maxH, startH));
+    sizeReady = true;
     rebuildCaches();
     startTimerHz (30);
 }
@@ -241,7 +244,7 @@ void SynthetikaEditor::resized()
 {
     layoutKnobs();
     if (drum != nullptr) drum->setBounds (getLocalBounds());
-    proc.uiHeight = getHeight();
+    if (sizeReady) proc.uiHeight = getHeight();
     resizeSettle = 4;
 }
 

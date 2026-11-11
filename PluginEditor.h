@@ -111,6 +111,7 @@ private:
     std::vector<int> knobModule;                       // colonne qui porte le potard (-1 = fixe)
     std::vector<juce::String> knobParam;
 
+    bool sizeReady = false;
     int cacheW = 0, cacheH = 0, resizeSettle = 0;
     float cacheScale = 0.0f, forcedScale = 0.0f;
     void* lastPeer = nullptr;

@@ -67,5 +67,6 @@ Windows 11 et macOS (binaire universel).
 
 | Version | Changements |
 |---|---|
+| 1.1.0 | Moteur audio refait : détection d'attaque, nouvelle note qui démarre juste sans glissement, suivi de 28 Hz (basse 5 cordes, 7 et 8 cordes) à 1,6 kHz, bends / vibrato / slides / legato suivis toutes les 1,5 ms, sauts d'octave filtrés ; 5 moteurs aux timbres bien distincts (filtre qui claque sur chaque note, jeu fort = plus brillant), relâchements plus courts, presets moins réverbérés. Taille de fenêtre gardée à la réouverture. Jacks réduits de 20 %. |
 | 1.0.1 | Tailles de fenêtre : 100 % (défaut), 125 %, 150 %, 200 %. |
 | 1.0.0 | Première version : 5 moteurs, 6 modules, ordre réordonnable, 14 presets d'usine, presets utilisateur, MIDI Learn, anti-gel v2. |

@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.22)
 set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "")
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "")
 
-project(Synthetika VERSION 1.0.1)
+project(Synthetika VERSION 1.1.0)
 
 if(DEFINED JUCE_DIR)
   add_subdirectory(${JUCE_DIR} juce)

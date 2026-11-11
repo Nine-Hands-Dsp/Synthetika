@@ -217,7 +217,14 @@ private:
             for (int t2 = std::max (gLo, 2); t2 <= gHi && t2 < computed; ++t2)
                 if (d[(size_t) t2] <= d[(size_t) t2 - 1] && d[(size_t) t2] <= d[(size_t) t2 + 1] && (m < 0 || d[(size_t) t2] < d[(size_t) m])) m = t2;
             // creux net seulement : avec d'autres cordes qui sonnent, un creux faible derive ; on garde alors la note
-            if (m > 0 && d[(size_t) m] < (mixContext ? 0.10f : 0.20f)) { finish (m, d[(size_t) m]);
+            // d'autres cordes sonnent : le creux de la note est moins profond ; on le suit quand meme, mais seulement tout pres
+            // de la note identifiee (+/- 0,6 demi-ton), ce qui garde la justesse sans pouvoir deriver vers une autre corde
+            const bool nearAnchor = m > 0 && anchorTau > 0.0f && std::abs ((float) m / anchorTau - 1.0f) < 0.018f;
+            if (m > 0 && (d[(size_t) m] < 0.20f || (mixContext && nearAnchor && d[(size_t) m] < 0.50f)))
+            {
+                const bool weak = d[(size_t) m] >= 0.20f;
+                finish (m, std::min (d[(size_t) m], 0.4f));
+                if (weak) freq = smoothMix (freq);                         // creux faible (autres cordes) : mediane des dernieres mesures
 #ifdef SYN_DEBUG
                 std::printf ("   guide brut %.1f d %.2f\n", freq, d[(size_t) m]);
 #endif
@@ -370,10 +377,12 @@ private:
         Epre = Enew; anchorTau = (float) tc;
         const float* dv = choice == 1 ? dA : dB;
         for (int tau = 0; tau <= maxT; ++tau) d[(size_t) tau] = dv[tau];
+        mixHist.fill (0.0f); mixN = 0;
         if (choice == 1) finish (tc, std::min (dv[tc], 0.3f));
         else { float t = (float) tc;
                if (tc > 1 && tc < maxT) { const float a = dv[tc - 1], b = dv[tc], c = dv[tc + 1], den = a - 2 * b + c; if (std::abs (den) > 1e-9f) t += std::clamp (0.5f * (a - c) / den, -0.5f, 0.5f); }
                freq = refineDiff (t * (float) dec, written - onsetWritten); conf = 1.0f - std::min (dv[tc], 0.3f); lastTau = tc; shortWin = false; }
+        if (freq > 1.0f) anchorTau = dsr / freq;                            // ancre a la hauteur affinee (pas a la periode entiere)
     }
     // suivi guide pendant que les autres cordes sonnent encore (note identifiee par la difference)
     bool guidedDiff (int gLo, int gHi)
@@ -387,15 +396,26 @@ private:
         for (int t2 = std::max (gLo, 2); t2 < maxT; ++t2)
             if (dB[t2] <= dB[t2 - 1] && dB[t2] <= dB[t2 + 1] && (m < 0 || dB[t2] < dB[m])) m = t2;
         if (m < 0 || dB[m] > 0.06f) return false;
+        if (anchorTau > 0.0f && std::abs ((float) m / anchorTau - 1.0f) > 0.018f) return false;   // pas plus de 30 cents de la note identifiee
         float t = (float) m; const float a = dB[m - 1], b = dB[m], c = dB[m + 1], den = a - 2 * b + c;
         if (std::abs (den) > 1e-9f) t += std::clamp (0.5f * (a - c) / den, -0.5f, 0.5f);
-        freq = dsr / t; conf = 1.0f - dB[m]; lastTau = m;
+        freq = smoothMix (dsr / t); conf = 1.0f - dB[m]; lastTau = m;
 #ifdef SYN_DEBUG
         std::printf ("   guide diff %.1f d %.2f\n", freq, dB[m]);
 #endif
         return true;
     }
     int fwOnset = 0; bool mixContext = false;
+    // mediane glissante des 7 dernieres mesures quand la note se distingue mal des autres cordes (pas de tremblement)
+    std::array<float, 7> mixHist {}; int mixN = 0;
+    float smoothMix (float f)
+    {
+        mixHist[(size_t) (mixN++ % 7)] = f;
+        const int k = std::min (mixN, 7);
+        float tmp[7]; for (int i = 0; i < k; ++i) tmp[i] = mixHist[(size_t) i];
+        std::sort (tmp, tmp + k);
+        return tmp[k / 2];
+    }
     float Dpre[kTauCap + 2] {}, Dnew[kTauCap + 2] {}; float Epre = 0.0f, Enew = 0.0f, curTauAtOnset = 0.0f, anchorTau = 0.0f; bool preReady = false, diffMode = false;
     long diffStart = 0; int lastChoice = 0, lastCand = 0;
 
@@ -427,7 +447,7 @@ private:
         std::printf ("   refineDiff L0 %d win %d zeros %d bestI %d/%d\n", L0, win, zeros, bestI, n);
 #endif
         if (zeros > 2) return refine (lag0);                                // l'ancienne note s'est arretee (meme corde) : affinage direct
-        if (bestI <= 0 || bestI >= n - 1) return sr / lag0;
+        if (bestI <= 0 || bestI >= n - 1) return refine (lag0);
         const float a = dv[bestI - 1], b = dv[bestI], c = dv[bestI + 1], den = a - 2 * b + c;
         const float L = (float) (L0 - span + bestI) + (std::abs (den) > 1e-12f ? std::clamp (0.5f * (a - c) / den, -0.5f, 0.5f) : 0.0f);
         return sr / L;

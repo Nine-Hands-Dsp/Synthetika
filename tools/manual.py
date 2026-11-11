@@ -15,7 +15,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHOTS = sys.argv[1]
 OUT = sys.argv[2]
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 TMP = os.path.join(os.path.dirname(os.path.abspath(OUT)), "_notice_tmp"); os.makedirs(TMP, exist_ok=True)
 ASSETS = os.path.join(ROOT, "tools", "manual_assets")
 FONTS = os.path.join(ASSETS, "fonts")

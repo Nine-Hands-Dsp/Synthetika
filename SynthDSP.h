@@ -91,10 +91,15 @@ struct Osc
         ph += dt; if (ph >= 1.0f) ph -= 1.0f;
     }
 };
-// ------------------------------------------------------------------ suivi de hauteur YIN monophonique (v1.1)
-// Signal decime vers ~11-12 kHz ; decalage jusqu'a 28 Hz (basse 5 cordes en Si, guitares 7 et 8 cordes) ;
-// fenetre adaptee a la note en cours (courte dans l'aigu : reponse rapide, longue dans le grave : stable) ;
-// calcul arrete des que le creux de la periode est trouve ; affinage a pleine resolution autour de la periode.
+// ------------------------------------------------------------------ suivi de hauteur monophonique (v1.2)
+// Signal decime vers ~11-12 kHz ; de 28 Hz (basse 5 cordes en Si, guitares 7 et 8 cordes) a 1,6 kHz.
+//  - YIN (difference normalisee cumulee), fenetre adaptee a la note en cours, affinage a pleine resolution ;
+//  - a chaque attaque, IDENTIFICATION de la nouvelle note : les autres cordes peuvent continuer a sonner (arpege,
+//    accord laisse sonner) ; on compare, harmonique par harmonique, l'energie juste apres l'attaque a celle juste
+//    avant : seule la note qui vient d'etre jouee voit ses harmoniques monter. Le melange des cordes (dont la
+//    periode commune tombe souvent une octave ou une quinte sous les notes) ne peut plus etre pris pour la note ;
+//  - ensuite SUIVI GUIDE : on suit le creux de la periode autour de la note identifiee (bends, vibrato, slides,
+//    legato jusqu'a 3 demi-tons) sans sauter sur une autre corde qui sonne encore.
 class PitchTracker
 {
 public:
@@ -106,9 +111,9 @@ public:
         tauMax = std::min (kTauCap, (int) (dsr / 28.0f));
         aa1.set (dsr * 0.42f, 0.54f, sr); aa2.set (dsr * 0.42f, 1.31f, sr);
         hp.set (20.0f, 0.7f, sr);
-        buf.assign (kBuf, 0.0f); w = 0; cnt = 0; hopCnt = 0;
+        buf.assign (kBuf, 0.0f); w = 0; cnt = 0; hopCnt = 0; written = 0;
         fbuf.assign (kFBuf, 0.0f); fw = 0;
-        freq = 0; conf = 0; lastTau = 0;
+        freq = 0; conf = 0; lastTau = 0; expTau = 0; identifying = false; identified = false;
         d.assign ((size_t) kTauCap + 2, 0.0f);
     }
     bool push (float x)
@@ -118,17 +123,27 @@ public:
         x = aa2.lp (aa1.lp (xh));
         if (++cnt < dec) return false;
         cnt = 0;
-        buf[(size_t) w] = x; w = (w + 1) & (kBuf - 1);
+        buf[(size_t) w] = x; w = (w + 1) & (kBuf - 1); ++written;
         // pas d'analyse : 16 echantillons decimes (~1,5 ms), plus long dans le grave (~1/6 de periode, 4 ms au plus)
-        const int hop = shortWin || lastTau <= 96 ? kHop : std::min (48, lastTau / 6);
+        const int hop = identifying || shortWin || lastTau <= 96 ? kHop : std::min (48, lastTau / 6);
         if (++hopCnt < hop) return false;
         hopCnt = 0;
         analyse();
         return true;
     }
-    void resetWindow() { shortWin = true; shortHold = 8; }    // nouvelle attaque : fenetre courte, l'ancienne note sort vite de l'analyse
+    // nouvelle attaque : fenetre courte et identification de la note qui vient d'etre jouee
+    void onset() {
+#ifdef SYN_DEBUG
+        std::printf ("  ONSET t=%.3f\n", (double) written / dsr);
+#endif
+        shortWin = true; shortHold = 8; identifying = true; onsetWritten = written; preReady = false; lastChoice = 0; lastCand = 0; curTauAtOnset = expTau; fwOnset = fw; }
+    void resetWindow() { onset(); }
+    // note suivie par le moteur (0 = aucune) : guide l'analyse en dehors des attaques
+    void setExpected (float hz) { expTau = hz > 1.0f ? dsr / hz : 0.0f; }
     float frequency() const { return freq; }
     float confidence() const { return conf; }
+    // vrai une fois apres l'identification d'une attaque (la hauteur rendue est celle de la nouvelle note)
+    bool takeIdentified() { const bool r = identified; identified = false; return r; }
 
 private:
     static constexpr int kBuf = 2048, kTauCap = 470, kHop = 16, kFBuf = 8192;
@@ -136,32 +151,39 @@ private:
     void analyse()
     {
         if (shortHold > 0) --shortHold;
-        // fenetre : ~1,7 periode de la note en cours (96 a 400 echantillons decimes)
-        const int win = shortWin ? 96 : (lastTau > 0 ? std::clamp ((int) ((lastTau > 100 ? 1.1f : 1.4f) * (float) lastTau), 96, 400) : 300);
-        const int tauMin = std::max (2, (int) (dsr / 1500.0f));
+        conf = 0.0f;
+        if (identifying) { identify(); return; }
+        if (diffMode && (written - diffStart > (long) (0.08f * dsr) || expTau <= 0.0f)) diffMode = false;
+        // note tenue : fenetre d'au moins ~15 ms (plusieurs periodes dans l'aigu : justesse stable meme quand la note s'eteint)
+        const int win = shortWin ? 96 : (lastTau > 0 ? std::clamp (std::max ((int) ((lastTau > 100 ? 1.1f : 1.4f) * (float) lastTau), (int) (0.015f * dsr)), 96, 400) : 300);
+        const int tauMin = std::max (2, (int) (dsr / 1600.0f));
         const int span = win + tauMax;
         const int start = (w - span + kBuf) & (kBuf - 1);
         float frame[400 + kTauCap];
-        float energy = 0.0f;
         for (int i = 0; i < span; ++i) frame[i] = buf[(size_t) ((start + i) & (kBuf - 1))];
-        // note grave : moyenne glissante (~1/6 de periode) qui ne garde que les premiers harmoniques ;
-        // les slides et bends sur les cordes graves (basse, 7 et 8 cordes) restent ainsi bien suivis
-        if (! shortWin && lastTau > 100)
+        // note grave suivie : moyenne glissante (~1/6 de periode) qui ne garde que les premiers harmoniques
+        if (! shortWin && ! identifying && lastTau > 100)
         {
             const int M = lastTau / 6;
             float acc = 0.0f, hist[128] {}; int h = 0;
-            for (int i = 0; i < span; ++i)
-            {
-                acc += frame[i] - hist[h]; hist[h] = frame[i]; h = (h + 1) % M;
-                frame[i] = acc / (float) M;
-            }
+            for (int i = 0; i < span; ++i) { acc += frame[i] - hist[h]; hist[h] = frame[i]; h = (h + 1) % M; frame[i] = acc / (float) M; }
         }
         const float* now = frame + tauMax;
+        float energy = 0.0f;
         for (int j = 0; j < win; ++j) energy += now[j] * now[j];
-        if (energy < 2.0e-8f * (float) win) { conf = 0.0f; return; }
+        if (energy < 2.0e-8f * (float) win) return;
 
-        float run = 0.0f, best = 2.0f; int bestTau = -1;
-        bool inDip = false;
+        // zone guidee : +/- 3 demi-tons autour de la note suivie
+        const bool guided = ! identifying && expTau > 0.0f;
+        // +/- 2 demi-tons autour de la note suivie, jamais a plus de 3,2 demi-tons de la note identifiee (pas de derive)
+        const float aLo = anchorTau > 0.0f ? anchorTau * 0.832f : 0.0f, aHi = anchorTau > 0.0f ? anchorTau * 1.203f : 1e9f;
+        // a chaque analyse (1,5 a 4 ms) la note ne peut bouger que de quelques pour-cent (bend, vibrato)
+        const int gLo = guided ? std::max (tauMin, (int) std::max (expTau * 0.965f - 1.0f, aLo)) : 0;
+        const int gHi = guided ? std::min (tauMax - 1, (int) std::min (expTau * 1.036f + 1.0f, aHi) + 1) : 0;
+        const int stopMin = identifying ? tauMax : (guided ? gHi + 1 : 0);
+
+        float run = 0.0f, best = 2.0f; int bestTau = -1; bool inDip = false, found = false;
+        int computed = tauMax;
         for (int tau = 1; tau <= tauMax; ++tau)
         {
             const float* past = now - tau;
@@ -171,37 +193,251 @@ private:
             const float v = run > 0.0f ? s * (float) tau / run : 1.0f;
             d[(size_t) tau] = v;
             if (tau < tauMin) continue;
-            if (v < 0.13f) { inDip = true; if (v < best) { best = v; bestTau = tau; } }
-            else if (inDip) break;                                        // creux de la periode depasse : on s'arrete
-            else if (v < best) { best = v; bestTau = tau; }
+            if (! found)
+            {
+                if (v < 0.13f) { inDip = true; if (v < best) { best = v; bestTau = tau; } }
+                else if (inDip) found = true;                                 // creux de la periode depasse
+                else if (v < best) { best = v; bestTau = tau; }
+            }
+            if (found && tau >= stopMin) { computed = tau; break; }          // le reste n'est utile qu'au guidage / a l'identification
         }
-        if (bestTau < tauMin || best > 0.40f) { conf = std::max (0.0f, 1.0f - best) * 0.4f; return; }
-        // sous-harmonique ? (corde grave au pincement : le creux d'une periode double peut etre plus profond)
-        // on prend la plus petite periode tau/k qui forme elle aussi un creux net
-        for (int k = 4; k >= 2; --k)
+        // sous-harmonique ? on prend la plus petite periode tau/k qui forme elle aussi un creux net
+        if (bestTau >= tauMin && best <= 0.40f)
+            for (int k = 4; k >= 2; --k)
+            {
+                const int c0 = (int) std::lround ((float) bestTau / (float) k);
+                if (c0 - 2 < tauMin) continue;
+                int m = c0; for (int t2 = c0 - 2; t2 <= c0 + 2; ++t2) if (d[(size_t) t2] < d[(size_t) m]) m = t2;
+                if (m > c0 - 2 && m < c0 + 2 && d[(size_t) m] < std::min (0.30f, best + 0.18f)) { best = d[(size_t) m]; bestTau = m; break; }
+            }
+
+        if (guided)
         {
-            const int c0 = (int) std::lround ((float) bestTau / (float) k);
-            if (c0 - 2 < tauMin) continue;
-            int m = c0; for (int t2 = c0 - 2; t2 <= c0 + 2; ++t2) if (d[(size_t) t2] < d[(size_t) m]) m = t2;
-            if (m > c0 - 2 && m < c0 + 2 && d[(size_t) m] < std::min (0.30f, best + 0.18f)) { best = d[(size_t) m]; bestTau = m; break; }
+            int m = -1;
+            for (int t2 = std::max (gLo, 2); t2 <= gHi && t2 < computed; ++t2)
+                if (d[(size_t) t2] <= d[(size_t) t2 - 1] && d[(size_t) t2] <= d[(size_t) t2 + 1] && (m < 0 || d[(size_t) t2] < d[(size_t) m])) m = t2;
+            // creux net seulement : avec d'autres cordes qui sonnent, un creux faible derive ; on garde alors la note
+            if (m > 0 && d[(size_t) m] < (mixContext ? 0.10f : 0.20f)) { finish (m, d[(size_t) m]);
+#ifdef SYN_DEBUG
+                std::printf ("   guide brut %.1f d %.2f\n", freq, d[(size_t) m]);
+#endif
+                return; }
+            if (diffMode) { guidedDiff (gLo, gHi); return; }               // autres cordes encore la : difference avec l'avant-attaque
+            // pas de creux pres de la note : seul un changement franc et net (legato plus large) est propose
+            if (bestTau >= tauMin && best < 0.12f) { finish (bestTau, best); if (best < 0.08f) anchorTau = (float) bestTau;
+#ifdef SYN_DEBUG
+                std::printf ("   global %.1f d %.2f\n", freq, best);
+#endif
+            }
+            return;
         }
-        float t = (float) bestTau;
-        if (bestTau > 1 && bestTau < tauMax)
+        if (bestTau >= tauMin && best <= 0.40f) { finish (bestTau, best); anchorTau = (float) bestTau; }
+    }
+
+    void finish (int tau, float dv)
+    {
+        float t = (float) tau;
+        if (tau > 1 && tau < tauMax)
         {
-            const float a = d[(size_t) bestTau - 1], b = d[(size_t) bestTau], c = d[(size_t) bestTau + 1];
+            const float a = d[(size_t) tau - 1], b = d[(size_t) tau], c = d[(size_t) tau + 1];
             const float den = a - 2 * b + c;
             if (std::abs (den) > 1e-9f) t += std::clamp (0.5f * (a - c) / den, -0.5f, 0.5f);
         }
-        if (best < 0.20f) { lastTau = bestTau; if (shortHold == 0) shortWin = false; }   // seule une periode nette regle la fenetre
+        if (dv < 0.20f || ! shortWin) { lastTau = tau; if (shortHold == 0) shortWin = false; }
         freq = refine (t * (float) dec);
-        conf = 1.0f - best;
+        conf = 1.0f - dv;
+    }
+
+    // ---------------------------------------------------------------- identification de la note jouee
+    // YIN differentiel : la difference (x[n] - x[n - tau])^2 apres l'attaque, moins la meme mesure juste avant l'attaque,
+    // ne contient plus que la note qui vient d'etre jouee (les cordes qui sonnaient deja s'annulent) ; son premier creux
+    // est la periode de la nouvelle note, meme a l'octave ou a la quinte d'une corde qui sonne encore.
+    static constexpr int kW = 96;
+    void sums (long endIdx, int maxT, float* D, float& E) const
+    {
+        float x[kW + kTauCap + 2];
+        const int n = kW + maxT;
+        for (int i = 0; i < n; ++i) x[i] = buf[(size_t) ((endIdx - n + i) & (kBuf - 1))];
+        const float* now = x + maxT;
+        E = 0.0f; for (int j = 0; j < kW; ++j) E += now[j] * now[j];
+        D[0] = 0.0f;
+        for (int tau = 1; tau <= maxT; ++tau)
+        {
+            const float* past = now - tau; float s = 0.0f;
+            for (int j = 0; j < kW; ++j) { const float e = now[j] - past[j]; s += e * e; }
+            D[tau] = s;
+        }
+    }
+    static void cmnd (const float* D, float* out, int maxT)
+    {
+        float run = 0.0f; out[0] = 1.0f;
+        for (int tau = 1; tau <= maxT; ++tau) { run += D[tau]; out[tau] = run > 1e-20f ? D[tau] * (float) tau / run : 1.0f; }
+    }
+    // premier creux net deja depasse (< 0.15), sinon plus petit creux si tout l'intervalle est couvert ; -1 = attendre
+    int firstDip (const float* dv, int maxT, int tauMin, float thr = 0.15f) const
+    {
+        int bt = -1; float bv = 2.0f; bool in = false;
+        for (int tau = tauMin; tau <= maxT; ++tau)
+        {
+            if (dv[tau] < thr) { in = true; if (dv[tau] < bv) { bv = dv[tau]; bt = tau; } }
+            else if (in) break;
+        }
+        if (in && bt > 0 && bt < maxT - 1)
+        {
+            for (int k = 4; k >= 2; --k)                                       // sous-harmonique ?
+            {
+                const int c0 = (int) std::lround ((float) bt / (float) k);
+                if (c0 - 2 < tauMin) continue;
+                int m = c0; for (int t2 = c0 - 2; t2 <= c0 + 2; ++t2) if (dv[t2] < dv[m]) m = t2;
+                if (m > c0 - 2 && m < c0 + 2 && dv[m] < std::min (0.30f, bv + 0.18f)) return m;
+            }
+            return bt;
+        }
+        if (maxT < tauMax) return -1;
+        for (int tau = tauMin; tau < maxT; ++tau) if (dv[tau] < bv) { bv = dv[tau]; bt = tau; }
+        return bv < 0.35f ? bt : -1;
+    }
+    static bool isMultiple (int a, int b) { if (b <= 0) return false; const float r = (float) a / (float) b; const int k = (int) std::lround (r); return k >= 2 && std::abs (r - (float) k) < 0.04f * (float) k; }
+
+    void identify()
+    {
+        const int tauMin = std::max (2, (int) (dsr / 1600.0f));
+        const long post = written - onsetWritten - (long) (0.001f * dsr);
+        const int maxT = (int) std::min<long> (tauMax, post - kW);
+        if (maxT < tauMin + 3) return;
+        if (! preReady)
+        {
+            const long preEnd = (long) w - (written - onsetWritten) - (long) (0.003f * dsr);
+            sums (preEnd, tauMax, Dnew, Enew); preReady = true;              // reference d'avant l'attaque (validee si la note est identifiee)
+        }
+        const float* Dp = Dnew; const float Ep = Enew;
+        float Dn[kTauCap + 2], dA[kTauCap + 2], dB[kTauCap + 2], Dd[kTauCap + 2];
+        float En = 0.0f;
+        sums ((long) w, maxT, Dn, En);
+        cmnd (Dn, dA, maxT);
+        // pas de nouvelle energie : fausse attaque... sauf si le son brut montre une autre note (meme corde, meme force)
+        const bool noNewEnergy = En < 1.2f * Ep && Ep > 1e-9f;
+        for (int tau = 0; tau <= maxT; ++tau) Dd[tau] = std::max (0.0f, Dn[tau] - Dp[tau]);
+        cmnd (Dd, dB, maxT);
+        const int tA = firstDip (dA, maxT, tauMin, 0.22f), tB = firstDip (dB, maxT, tauMin);
+        if (noNewEnergy)
+        {
+            const bool same = tA > 0 && curTauAtOnset > 0.0f && std::abs ((float) tA / curTauAtOnset - 1.0f) <= 0.03f;
+            const bool other = tA > 0 && ! same && dA[tA] < 0.22f;
+            if (! other) { if (same || post > (long) (0.06f * dsr)) identifying = false; return; }
+            if (! (lastChoice == 1 && lastCand > 0 && std::abs ((float) tA / (float) lastCand - 1.0f) < 0.03f)) { lastChoice = 1; lastCand = tA; return; }
+            identifying = false; identified = true; diffMode = false; mixContext = false; anchorTau = (float) tA;
+            for (int tau = 0; tau <= maxT; ++tau) d[(size_t) tau] = dA[tau];
+            finish (tA, dA[tA]);
+            return;
+        }
+        const bool ringing = Ep > 0.08f * En;
+        // la difference doit vraiment s'annuler a la periode trouvee (par rapport a l'energie nouvelle), sinon c'est du bruit
+        const float eNew = std::max (1e-12f, En - Ep);
+        // beaucoup de differences negatives = l'ancienne note s'est arretee (meme corde) : la difference n'a plus de sens
+        // la periode trouvee par la difference doit aussi laisser une trace dans le son brut (sinon : artefact de la
+        // difference, typiquement quand la note d'avant s'est arretee sur la meme corde)
+        float aAtB = 9.0f;
+        if (tB > 0) for (int t2 = std::max (2, (int) (tB * 0.97f)); t2 <= std::min (maxT, (int) (tB * 1.03f) + 1); ++t2) aAtB = std::min (aAtB, dA[t2]);
+        const bool oldStopped = false;
+        const bool bOk = tB > 0 && Dd[tB] < 0.5f * eNew && aAtB < 0.6f;
+        // note en cours rejouee (meme corde, meme note) : la difference s'annule a sa periode
+        int tCur = -1;
+        if (curTauAtOnset > 0.0f && curTauAtOnset < (float) maxT - 2.0f)
+        {
+            const int c0 = (int) std::lround (curTauAtOnset); int m = c0;
+            for (int t2 = std::max (2, (int) (curTauAtOnset * 0.97f)); t2 <= std::min (maxT - 1, (int) (curTauAtOnset * 1.03f) + 1); ++t2) if (dB[t2] < dB[m]) m = t2;
+            if (dB[m] < 0.10f && Dd[m] < 0.3f * eNew) tCur = m;
+        }
+        int choice = 0, tBuse = tB;                                          // 1 = melange brut, 2 = differentiel
+        if (! ringing || oldStopped) choice = tA > 0 ? 1 : 0;
+        else if (bOk && (tA < 0 || isMultiple (tA, tB) || dB[tB] < dA[tA] - 0.05f)) choice = 2;
+        else if (tA > 0 && ! (bOk && isMultiple (tA, tB))) choice = 1;
+        else if (tCur > 0) { choice = 2; tBuse = tCur; }
+        const bool late = post > (long) (0.100f * dsr);
+        if (choice == 0) { if (late) identifying = false; return; }
+        const int tc = choice == 1 ? tA : tBuse;
+        // deux analyses concordantes (ou attente trop longue) avant de rendre la note
+        if (! late && ! (lastChoice == choice && lastCand > 0 && std::abs ((float) tc / (float) lastCand - 1.0f) < 0.03f))
+        { lastChoice = choice; lastCand = tc; return; }
+
+#ifdef SYN_DEBUG
+        std::printf ("  IDENT t=%.3f post=%.1fms %s -> %.1f Hz (A %.1f d %.2f, B %.1f d %.2f) Epre/En %.2f\n", (double) written / dsr, 1000.0 * post / dsr,
+                     choice == 1 ? "brut" : "diff", dsr / tc, tA > 0 ? dsr / tA : 0.0f, tA > 0 ? dA[tA] : 9.0f, tB > 0 ? dsr / tB : 0.0f, tB > 0 ? dB[tB] : 9.0f, Epre / std::max (1e-12f, En));
+#endif
+        identifying = false; identified = true; diffMode = choice == 2; diffStart = written; mixContext = choice == 2;
+        for (int tau = 0; tau <= tauMax; ++tau) Dpre[tau] = Dnew[tau];
+        Epre = Enew; anchorTau = (float) tc;
+        const float* dv = choice == 1 ? dA : dB;
+        for (int tau = 0; tau <= maxT; ++tau) d[(size_t) tau] = dv[tau];
+        if (choice == 1) finish (tc, std::min (dv[tc], 0.3f));
+        else { float t = (float) tc;
+               if (tc > 1 && tc < maxT) { const float a = dv[tc - 1], b = dv[tc], c = dv[tc + 1], den = a - 2 * b + c; if (std::abs (den) > 1e-9f) t += std::clamp (0.5f * (a - c) / den, -0.5f, 0.5f); }
+               freq = refineDiff (t * (float) dec, written - onsetWritten); conf = 1.0f - std::min (dv[tc], 0.3f); lastTau = tc; shortWin = false; }
+    }
+    // suivi guide pendant que les autres cordes sonnent encore (note identifiee par la difference)
+    bool guidedDiff (int gLo, int gHi)
+    {
+        const int maxT = std::min (tauMax, gHi + 1);
+        float Dn[kTauCap + 2], dB[kTauCap + 2], Dd[kTauCap + 2]; float En = 0.0f;
+        sums ((long) w, maxT, Dn, En);
+        for (int tau = 0; tau <= maxT; ++tau) Dd[tau] = std::max (0.0f, Dn[tau] - Dpre[tau]);
+        cmnd (Dd, dB, maxT);
+        int m = -1;
+        for (int t2 = std::max (gLo, 2); t2 < maxT; ++t2)
+            if (dB[t2] <= dB[t2 - 1] && dB[t2] <= dB[t2 + 1] && (m < 0 || dB[t2] < dB[m])) m = t2;
+        if (m < 0 || dB[m] > 0.06f) return false;
+        float t = (float) m; const float a = dB[m - 1], b = dB[m], c = dB[m + 1], den = a - 2 * b + c;
+        if (std::abs (den) > 1e-9f) t += std::clamp (0.5f * (a - c) / den, -0.5f, 0.5f);
+        freq = dsr / t; conf = 1.0f - dB[m]; lastTau = m;
+#ifdef SYN_DEBUG
+        std::printf ("   guide diff %.1f d %.2f\n", freq, dB[m]);
+#endif
+        return true;
+    }
+    int fwOnset = 0; bool mixContext = false;
+    float Dpre[kTauCap + 2] {}, Dnew[kTauCap + 2] {}; float Epre = 0.0f, Enew = 0.0f, curTauAtOnset = 0.0f, anchorTau = 0.0f; bool preReady = false, diffMode = false;
+    long diffStart = 0; int lastChoice = 0, lastCand = 0;
+
+    // affinage a pleine resolution de la note identifiee par la difference (memes fenetres avant / apres l'attaque)
+    float refineDiff (float lag0, long postDec)
+    {
+        const int L0 = (int) std::lround (lag0), span = std::min (dec * 2 + 1, 31);
+        const long postFull = postDec * dec - (long) (0.001f * sr);
+        const int win = (int) std::min<long> (std::clamp (2 * L0, 256, 2048), postFull - L0 - span - 2);
+        const long back = postDec * dec + (long) (0.003f * sr);             // fin de la fenetre d'avant l'attaque
+        if (win < 128 || back + win + L0 + span + 4 >= kFBuf) return sr / lag0;
+        float dv[64]; const int n = 2 * span + 1; int bestI = -1, zeros = 0; float best = 1e30f;
+        for (int k = 0; k < n; ++k)
+        {
+            const int L = L0 - span + k;
+            if (L < 2) { dv[k] = 1e30f; continue; }
+            float sNow = 0, sPre = 0, eNow = 0;
+            for (int j = 0; j < win; ++j)
+            {
+                const float a = fbuf[(size_t) ((fw - 1 - j) & (kFBuf - 1))], b = fbuf[(size_t) ((fw - 1 - j - L) & (kFBuf - 1))];
+                const float c = fbuf[(size_t) ((fw - 1 - back - j) & (kFBuf - 1))], e = fbuf[(size_t) ((fw - 1 - back - j - L) & (kFBuf - 1))];
+                sNow += (a - b) * (a - b); sPre += (c - e) * (c - e); eNow += a * a + b * b;
+            }
+            dv[k] = eNow > 0 ? std::max (0.0f, sNow - sPre) / eNow : 1.0f;
+            if (dv[k] <= 0.0f) ++zeros;
+            if (dv[k] < best) { best = dv[k]; bestI = k; }
+        }
+#ifdef SYN_DEBUG
+        std::printf ("   refineDiff L0 %d win %d zeros %d bestI %d/%d\n", L0, win, zeros, bestI, n);
+#endif
+        if (zeros > 2) return refine (lag0);                                // l'ancienne note s'est arretee (meme corde) : affinage direct
+        if (bestI <= 0 || bestI >= n - 1) return sr / lag0;
+        const float a = dv[bestI - 1], b = dv[bestI], c = dv[bestI + 1], den = a - 2 * b + c;
+        const float L = (float) (L0 - span + bestI) + (std::abs (den) > 1e-12f ? std::clamp (0.5f * (a - c) / den, -0.5f, 0.5f) : 0.0f);
+        return sr / L;
     }
 
     // affinage a pleine resolution : difference normalisee autour de la periode grossiere, minimum parabolique
     float refine (float lag0)
     {
-        const int L0 = (int) std::lround (lag0), span = std::min (dec * 2 + 1, 31);   // recherche symetrique (2 x 31 + 1 <= 63)
-        const int win = std::clamp (2 * L0, 256, 2048);
+        const int L0 = (int) std::lround (lag0), span = std::min (dec * 2 + 1, 31);
+        const int win = std::clamp (std::max (2 * L0, (int) (0.018f * sr)), 256, 2048);   // ~18 ms minimum : moins de bruit sur la justesse
         if (L0 + span + win + 2 >= kFBuf) return sr / lag0;
         float dv[64]; const int n = 2 * span + 1;
         int bestI = -1; float best = 1e30f;
@@ -224,9 +460,10 @@ private:
         return sr / L;
     }
 
-    float sr = 48000, dsr = 12000;
+    float sr = 48000, dsr = 12000, expTau = 0;
     int dec = 4, cnt = 0, hopCnt = 0, w = 0, tauMax = 400, lastTau = 0;
-    bool shortWin = false; int shortHold = 0;
+    long written = 0, onsetWritten = 0;
+    bool shortWin = false, identifying = false, identified = false; int shortHold = 0;
     Svf aa1, aa2, hp;
     std::vector<float> buf, d, fbuf; int fw = 0;
     float freq = 0, conf = 0;
@@ -265,9 +502,9 @@ public:
         sr = (float) sampleRate;
         tracker.prepare (sampleRate);
         for (auto& v : voices) v.reset ((float) rand01());
-        envFast = envSlow = 0; amp = 0; fEnv = 0; logF = std::log2 (110.0f); logFTarget = logF; haveNote = false;
+        envFast = envSlow = 0; amp = 0; lvlPeak = lvl = 0; gateOn = false; synDc[0].reset(); synDc[1].reset(); fEnv = 0; logF = std::log2 (110.0f); logFTarget = logF; haveNote = false;
         holdN = 0; waitN = 0; onsetN = 0; candVotes = 0; candLog = 0;
-        inHp.set (25.0f, 0.7f, sr); onHp.set (1800.0f, 0.7f, sr); hfFast = hfSlow = 0;
+        inHp.set (25.0f, 0.7f, sr); onHp.set (1800.0f, 0.7f, sr); hfFast = hfSlow = 0; hfRing.fill (0.0f); lfRing.fill (0.0f); lfFast = lfSlow = 0; hfPos = hfTick = 0;
         const int maxD = (int) (sr * 1.15f) + 8;
         for (int c = 0; c < 2; ++c)
         {
@@ -302,6 +539,13 @@ public:
 
     float inPeak = 0.0f, outPeak = 0.0f;
     int curEng = 0, wantEng = 0; float engXf = 1.0f;
+    static float softLimit (float x)
+    {
+        const float a = std::abs (x), k = 0.79f;                          // genou a -2 dBFS, plafond 0 dBFS
+        if (a <= k) return x;
+        const float y = k + (1.0f - k) * std::tanh ((a - k) / (1.0f - k));
+        return x < 0.0f ? -y : y;
+    }
     float trackedHz() const { return haveNote ? std::exp2 (logF) : 0.0f; }
 
     void process (float* const* io, int numCh, int n, const Params& p)
@@ -323,11 +567,14 @@ public:
         const float xfStep = 1.0f / (0.008f * sr);
         const float atkC = std::exp (-1.0f / (es.attack * sr)), relC = std::exp (-1.0f / (es.release * sr));
         const float fEnvC = std::exp (-1.0f / (es.filterDecay * sr));
+        const float lvlAtkC = std::exp (-1.0f / (0.001f * sr)), lvlRelC = std::exp (-1.0f / (0.030f * sr)), lvlSmC = 1.0f - std::exp (-1.0f / (0.004f * sr));
         const float cutC = std::exp (-1.0f / ((curEng == 3 ? 0.015f : 0.005f) * sr));                 // nouvelle attaque : l'ancienne note se tait en ~5 ms
-        const float glideC = 1.0f - std::exp (-1.0f / (0.0025f * sr));        // 2,5 ms : bends et vibrato suivis sans retard audible
+        const float glideC = 1.0f - std::exp (-1.0f / (0.0025f * sr));
+        const float fineC = 1.0f - std::exp (-1.0f / (0.008f * sr));        // 2,5 ms : bends et vibrato suivis sans retard audible
         const float slowC = 1.0f - std::exp (-1.0f / (0.030f * sr));
-        const float hfAtkC = 1.0f - std::exp (-1.0f / (0.025f * sr)), hfRelC = 1.0f - std::exp (-1.0f / (0.002f * sr));
-        const int waitMax = (int) (0.110f * sr), holdMax = (int) (0.080f * sr), onsetMax = (int) (0.050f * sr), minWaitN = (int) (0.009f * sr);
+        const float hfShortC = 1.0f - std::exp (-1.0f / (0.003f * sr));
+        const int hfTickLen = std::max (1, (int) (sr * 0.0007f));
+        const int waitMax = (int) (0.110f * sr), holdMax = (int) (0.080f * sr), onsetMax = (int) (0.050f * sr);
 
         float* L = io[0]; float* R = numCh > 1 ? io[1] : nullptr;
         for (int i = 0; i < n; ++i)
@@ -344,15 +591,36 @@ public:
             envFast += (ax > envFast ? 0.30f : 0.0012f) * (ax - envFast);
             envSlow += slowC * (envFast - envSlow);
             // attaque du mediator : bouffee d'aigus (> 1,8 kHz), visible meme quand la note precedente sonne encore fort
-            const float ah = std::abs (onHp.hp (x));
-            hfFast += (ah > hfFast ? 0.25f : 0.0025f) * (ah - hfFast);
-            hfSlow += (hfFast < hfSlow ? hfRelC : hfAtkC) * (hfFast - hfSlow);          // plancher : suit les creux, monte lentement
+            // energie des aigus sur ~3 ms, comparee au MAXIMUM des 8 a 40 ms precedentes : les battements de cordes
+            // qui sonnent ensemble ne declenchent rien, seul un vrai coup de mediator (bouffee d'aigus) passe
+            const float ah = onHp.hp (x);
+            hfFast += hfShortC * (ah * ah - hfFast);
+            lfFast += hfShortC * (x * x - lfFast);                              // meme mesure sur tout le spectre (cordes graves)
+            if (++hfTick >= hfTickLen)
+            {
+                hfTick = 0; hfRing[(size_t) hfPos] = hfFast; lfRing[(size_t) hfPos] = lfFast; hfPos = (hfPos + 1) % kHfRing;
+                float mx = 0.0f, ml = 0.0f;
+                for (int k = 12; k < kHfRing; ++k)
+                {
+                    const size_t q = (size_t) ((hfPos - 1 - k + 2 * kHfRing) % kHfRing);
+                    mx = std::max (mx, hfRing[q]); ml = std::max (ml, lfRing[q]);
+                }
+                hfSlow = mx; lfSlow = ml;
+            }
             const bool pick = (envFast > 0.003f && envFast > 1.9f * envSlow + 0.0015f)
-                           || (hfFast > 0.0012f && hfFast > 1.7f * hfSlow + 0.0006f);
+                           || (hfFast > 2.0e-6f && hfFast > 2.0f * hfSlow + 1.0e-6f)
+                           || (lfFast > 1.0e-5f && lfFast > 1.8f * lfSlow + 2.0e-6f);
             if (pick && onsetN == 0)
             {
-                onsetN = onsetMax; waitN = waitMax; candVotes = 0;           // nouvelle note : on attend la nouvelle hauteur
-                fEnv = 1.0f; tracker.resetWindow();
+                // nouvelle attaque : la note en cours continue (legato) jusqu'a l'identification de la nouvelle note ;
+                // si rien ne sonnait, le synthe attend la hauteur en silence (aucune note fausse au demarrage)
+                onsetN = onsetMax; candVotes = 0;
+                waitN = (haveNote && gateOn && amp > 0.0005f) ? 0 : waitMax;     // une note sonne : elle continue jusqu'a l'identification
+#ifdef SYN_DEBUG
+                std::printf ("  pick env %.4f/%.4f hf %.4f/%.4f\n", envFast, envSlow, hfFast, hfSlow);
+#endif
+                tracker.onset();
+                envSlow = envFast; hfRing.fill (hfFast); lfRing.fill (lfFast);                             // nouvelle reference : une seule detection par coup de mediator
             }
             if (onsetN > 0) --onsetN;
 
@@ -361,40 +629,56 @@ public:
             //  - nouvelle note (attaque) : on ignore l'analyse tant que l'ancienne note la remplit (9 ms), puis deux
             //    estimations concordantes et la note demarre directement a la bonne hauteur (pas de glissement) ;
             //  - legato (hammer-on, pull-off) : saut confirme par 3 analyses ; saut d'octave sans attaque : 30 ms.
+            tracker.setExpected (haveNote && waitN == 0 ? std::exp2 (logFTarget) : 0.0f);
             if (tracker.push (x))
             {
                 const float f = tracker.frequency(), c = tracker.confidence();
-                const bool fresh = onsetN == 0 || onsetMax - onsetN > minWaitN;
+                const bool ident = tracker.takeIdentified();                    // la note qui vient d'etre jouee, identifiee
                 const float lf = f > 1.0f ? std::log2 (f) : 0.0f;
                 const float jump = std::abs (lf - logFTarget);
-                const float cMin = haveNote && waitN == 0 && jump < 0.06f ? 0.45f : 0.62f;     // continuite (bend, slide) : plus tolerant
-                if (fresh && f > 27.0f && f < 1600.0f && c > cMin && envFast > 0.0008f)
+                if (f > 27.0f && f < 1650.0f && c > 0.44f && envFast > 0.0008f)
                 {
-                    // estimations concordantes : on suit le candidat s'il derive peu (slide), sinon on repart de zero
                     if (std::abs (lf - candLog) < 0.04f) ++candVotes; else candVotes = 1;
                     candLog = lf;
-                    const bool newNote = ! haveNote || waitN > 0;
+                    const bool newNote = ident || ! haveNote;
                     int need = 1;
-                    if (newNote) need = 2;
-                    else if (jump > 0.06f)
+                    if (! newNote && waitN > 0) need = 2;                         // attaque sans identification (tres grave) : 2 analyses concordantes
+                    else if (! newNote && jump > 0.06f)
                     {
+                        // changement sans attaque : legato (hammer-on, pull-off) ou glissement ; les sauts d'octave et les
+                        // descentes de plus de 4 demi-tons (periode commune de cordes qui sonnent ensemble) doivent durer
                         const bool octave = std::abs (jump - 1.0f) < 0.07f || std::abs (jump - 2.0f) < 0.07f;
-                        need = ! octave ? 3 : (onsetN > 0 && lf > logFTarget ? 3 : 20);   // juste apres l'attaque : correction d'une octave trop basse
+                        const bool farDown = lf < logFTarget - 0.34f;
+                        need = jump <= 0.26f ? 2 : (octave || farDown ? 30 : 8);
                     }
                     if (candVotes >= need)
                     {
-                        if (newNote || jump > 0.06f) logF = lf;
+                        if (newNote || waitN > 0 || jump > 0.06f) logF = lf;            // la note change d'un coup, sans glissement
+                        if (ident) fEnv = 1.0f;                                          // claquement de filtre sur la note jouee
                         logFTarget = lf; haveNote = true; holdN = holdMax; waitN = 0;
+                        if (newNote) candVotes = 0;
                     }
                 }
             }
             if (waitN > 0 && --waitN == 0) {}                                  // pas de nouvelle hauteur en 30 ms : on garde l'ancienne
             if (holdN > 0) --holdN;
-            logF += (logFTarget - logF) * glideC;
+            // justesse : petits ecarts (bruit d'analyse, < 1/3 de demi-ton) lisses sur ~12 ms, vrais mouvements suivis en 2,5 ms
+            {
+                const float dl = logFTarget - logF;
+                logF += dl * (std::abs (dl) < 0.012f ? fineC : glideC);
+            }
 
             // amplitude : suit l'attaque et le sustain de la corde ; muette tant que la nouvelle hauteur n'est pas connue
-            const bool sounding = haveNote && (holdN > 0 || envFast > 0.0022f);
-            const float target = (sounding && waitN == 0) ? envFast * 1.55f : 0.0f;
+            // niveau de la corde sans ondulation (crete 1 ms / 30 ms puis lissage 4 ms), compresse en douceur :
+            // une attaque forte ne fait plus saturer la suite de la chaine, une note douce reste presente
+            lvlPeak = ax > lvlPeak ? ax + (lvlPeak - ax) * lvlAtkC : ax + (lvlPeak - ax) * lvlRelC;
+            lvl += lvlSmC * (lvlPeak - lvl);
+            const float lvlC = 0.75f * (1.0f - std::exp (-3.5f * lvl));          // ~2,6 x le niveau aux faibles niveaux, plafonne a 0,75
+            // porte avec hysteresis : la fin de note s'eteint proprement au lieu de crachoter autour du seuil
+            if (! haveNote) gateOn = false;
+            else if (holdN > 0 || lvl > 0.0030f) gateOn = true;
+            else if (lvl < 0.0014f) gateOn = false;
+            const float target = (gateOn && waitN == 0) ? lvlC : 0.0f;
             amp = target > amp ? target + (amp - target) * atkC : target + (amp - target) * (waitN > 0 ? cutC : relC);
             fEnv *= fEnvC;
 
@@ -429,6 +713,7 @@ public:
                 synR = norm * comp * (c * (1.0f - 0.5f * mm) + sh * 0.5f * mm) * amp * synOn * engXf;
             }
 
+            synL = synDc[0].run (synL); synR = synDc[1].run (synR);
             const float sm = sSynMix.next() * synOn;
             float l = xl * (1.0f - sm) + synL * sm;
             float r = xr * (1.0f - sm) + synR * sm;
@@ -457,7 +742,10 @@ public:
             const float m = sMix.next(), go = sOut.next();
             float ol = (xl * (1.0f - m) + l * m) * go;
             float orr = (xr * (1.0f - m) + r * m) * go;
-            ol = rawL + (ol - rawL) * active; orr = rawR + (orr - rawR) * active;            // bypass : entree rendue telle quelle
+            // bypass : entree rendue telle quelle (apres le limiteur, qui ne s'applique qu'au son traite)
+            // limiteur doux de securite : rien ne depasse 0 dBFS vers les plugins suivants (transparent sous -2 dBFS)
+            ol = softLimit (ol); orr = softLimit (orr);
+            ol = rawL + (ol - rawL) * active; orr = rawR + (orr - rawR) * active;
             if (! std::isfinite (ol)) ol = 0;
             if (! std::isfinite (orr)) orr = 0;
             outPeak = std::max (outPeak * 0.9995f, std::max (std::abs (ol), std::abs (orr)));
@@ -511,7 +799,7 @@ private:
         float one (int eng, int copy, float f, float sr, float env, float fEnv)
         {
             const int b = copy * 5;
-            const bool upd = (tick[copy]++ & 3u) == 0u;                       // filtres : coefficients mis a jour toutes les 4 echantillons
+            const bool upd = (tick[copy]++ & 1u) == 0u;                       // filtres : coefficients mis a jour un echantillon sur deux
             const float dt = std::min (0.45f, f / sr);
             const float bright = std::min (1.0f, env * 5.0f);                // jeu plus fort = plus brillant
             float s0, q0, s1, q1, s2, q2, s3, q3;
@@ -532,7 +820,7 @@ private:
                     osc[(size_t) b + 2].tick (dt * 0.5f, 0.5f, s2, q2);
                     const float cut = f * (1.4f + 16.0f * fEnv + 5.0f * bright);
                     if (upd) lad[copy].set (std::min (cut, 12000.0f), 0.40f, sr);
-                    return lad[copy].run (0.55f * s0 + 0.38f * s1 + 0.30f * q2) * 2.2f;
+                    return lad[copy].run (0.55f * s0 + 0.38f * s1 + 0.30f * q2) * 1.8f;
                 }
                 case 2:   // SOLO : impulsion a largeur modulee + scie, passe-bas resonant et saturation : lead qui tranche
                 {
@@ -556,7 +844,7 @@ private:
                 {
                     osc[(size_t) b].tick (dt, 0.5f, s0, q0);
                     if (upd) lp[copy].set (std::min (6000.0f, f * 13.0f * (1.0f + 0.5f * fEnv)), 0.75f, sr);
-                    return lp[copy].lp (0.5f * q0 + 0.5f * s0) * 1.45f;
+                    return lp[copy].lp (0.5f * q0 + 0.5f * s0) * 1.2f;
                 }
             }
         }
@@ -690,8 +978,12 @@ private:
     std::array<Voice, 3> voices;
     Svf inHp, onHp;
     float hfFast = 0, hfSlow = 0;
+    static constexpr int kHfRing = 57;                                      // 57 x 0,7 ms = 40 ms
+    std::array<float, kHfRing> hfRing {}, lfRing {}; int hfPos = 0, hfTick = 0; float lfFast = 0, lfSlow = 0;
     float envFast = 0, envSlow = 0, amp = 0, fEnv = 0, logF = 7, logFTarget = 7, candLog = 0;
-    bool haveNote = false;
+    bool haveNote = false, gateOn = false;
+    float lvlPeak = 0.0f, lvl = 0.0f;
+    DcBlock synDc[2];
     int holdN = 0, waitN = 0, onsetN = 0, candVotes = 0;
 
     Smooth sMix, sSynMix, sIn, sOut, sDist, sModD, sModM, sRingHz, sRingM, sCrHz, sBits, sVerbMs, sVerbM, sActive;

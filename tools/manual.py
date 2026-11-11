@@ -15,7 +15,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHOTS = sys.argv[1]
 OUT = sys.argv[2]
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 TMP = os.path.join(os.path.dirname(os.path.abspath(OUT)), "_notice_tmp"); os.makedirs(TMP, exist_ok=True)
 ASSETS = os.path.join(ROOT, "tools", "manual_assets")
 FONTS = os.path.join(ASSETS, "fonts")
@@ -105,7 +105,7 @@ FACTORY = [
     ("Analog Lead", "Solo", "Drive Rich 32 % (post), Modulation 18 / 40 %, Reverb 320 ms / 16 %", "Lead analogique qui chante et tranche."),
     ("Vintage Keys", "Vintage", "Synth Mix 90 %, Modulation 25 / 50 %", "Synthé chaud au filtre qui claque sur chaque note, un peu de guitare dessous."),
     ("String Machine", "Strings", "Modulation 45 / 65 %, Reverb 650 ms / 30 %", "Nappe de cordes électroniques à attaque lente."),
-    ("Octave Stack", "Harmony −12 / +12", "Drive Soft 22 %", "Octave en dessous et au-dessus : énorme en notes seules."),
+    ("Octave Stack", "Harmony −12 / +12", "Drive Soft 15 %", "Octave en dessous et au-dessus : énorme en notes seules."),
     ("Broken Radio", "Solo", "Drive Hard 48 %, Bitcrush 62 % / 6 bits", "Lead cassé et numérique, façon radio qui grésille."),
     ("Ring Bell", "Vintage", "Ring Mod 870 Hz / 60 %, Modulation 20 / 40 %, Reverb 450 ms / 22 %", "Timbre de cloche métallique (ordre Ring Mod > Bitcrush > Reverb)."),
     ("80s Gated Lead", "Solo", "Drive Soft 20 % (post), Modulation 28 / 55 %, Reverb 480 ms / 55 %", "Lead années 80 avec une grosse réverbe à porte."),
@@ -165,11 +165,11 @@ def story():
                        P("Actifs en mode Harmony (grisés sinon). Chaque intervalle se règle de −24 à +24 demi-tons : flèches, molette, ou clic sur l'écran pour ouvrir le <b>tambour</b> (molette puis clic, Entrée pour valider, Échap pour annuler). +12 = une octave au-dessus, −12 = une octave en dessous. INTERVAL 2 peut être coupé (<i>OFF</i>) ; avec les deux voix, vous entendez trois voix de synthé.")],
                       img(synth_img, 52 * mm)]], colWidths=[W - 56 * mm, 56 * mm], style=[("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (0, 0), 0)]))
     f.append(P("Jouer Synthetika", "h2"))
-    f += bullets(["Suivi de hauteur : de B0 (31 Hz, basse 5 cordes) et F#1 (8 cordes) jusqu'au-dessus de C6. Chaque attaque est détectée : la nouvelle note démarre directement à la bonne hauteur, sans glissement ni bavure (≈ 10 ms sur une guitare, environ deux périodes de la note dans le grave).",
+    f += bullets(["Suivi de hauteur : de B0 (31 Hz, basse 5 cordes) et F#1 (8 cordes) jusqu'au-dessus de C6. Chaque attaque est détectée : la nouvelle note démarre directement à la bonne hauteur, sans glissement ni bavure (≈ 15 ms sur une guitare, environ deux périodes de la note dans le grave) ; la note précédente continue jusque-là, il n'y a jamais de trou.",
                   "Bends, vibratos, slides et legato (hammer-on, pull-off) sont suivis en continu, analyse toutes les 1,5 ms ; un saut d'octave parasite est filtré.",
-                  "Gardez le volume de la guitare haut et un signal propre ; avec trop peu de niveau, des notes peuvent être manquées (montez INPUT).",
-                  "Accords et notes qui sonnent ensemble troublent le suivi : étouffez les cordes inutiles. Sur un slide très rapide dans le grave, le synthé suit avec quelques millisecondes de retard.",
-                  "Le volume du synthé suit votre attaque et votre sustain ; le synthé se tait dès que la corde s'arrête (étouffez pour des notes courtes et serrées)."], "tip")
+                  "Signal trop faible : montez INPUT.",
+                  "Arpèges laissés sonner : à chaque attaque, la note jouée est identifiée en comparant le son juste après et juste avant ; les cordes qui sonnent encore ne la troublent pas. Sur un accord plaqué, le synthé ne suit qu'une note.",
+                  "Le volume suit votre jeu avec une compression douce, la fin de note s'éteint proprement et un limiteur doux garde la sortie sous 0 dBFS."], "tip")
     f.append(PageBreak())
     f.append(P("6. Les effets", "h1"))
     f.append(Table([[[P("Distortion", "h2"),
@@ -200,12 +200,12 @@ def story():
     f.append(table(rows, [7 * mm, 27 * mm, 25 * mm, 55 * mm, W - 114 * mm], small=True))
     f.append(P("9. Conseils d'utilisation", "h1"))
     f += bullets(["Dans Reaper, placez Synthetika sur la piste guitare <b>avant</b> Ampire et Impulse ; pour un son de synthé pur, contournez l'ampli ou utilisez une capture propre.",
-                  "Utilisez le buffer le plus bas qui reste stable : la détection prend environ 10 ms sur une guitare, la carte son et les autres plugins en ajoutent.",
+                  "Utilisez le buffer le plus bas qui reste stable : la détection prend environ 15 ms sur une guitare, la carte son et les autres plugins en ajoutent.",
                   "Sur une 7 ou 8 cordes ou une basse, Deep et Vintage donnent une basse énorme ; gardez une attaque franche sur les cordes graves.",
                   "Pour doubler la guitare : MIX du synthé vers 50 % (preset <i>Guitar + Synth</i>), puis un peu de Modulation pour l'élargir.",
                   "Les octaves d'Harmony (−12, +12) sonnent bien sur tout le manche ; la quinte (+7) est la signature de Soklo."], "tip")
     tech = [["Format", "VST3 (Windows 64 bits, macOS universel Apple Silicon + Intel)"], ["Canaux", "entrée mono ou stéréo, sortie stéréo (ou mono)"],
-            ["Suivi", "monophonique, YIN décimé à fenêtre adaptée + affinage à pleine résolution, de 28 Hz à 1,6 kHz, analyse toutes les 1,5 ms ; détection d'attaque ; nouvelle note ≈ 10 ms (plus dans le grave)"],
+            ["Suivi", "monophonique, YIN décimé à fenêtre adaptée + affinage à pleine résolution, de 28 Hz à 1,6 kHz, analyse toutes les 1,5 ms ; détection d'attaque et identification de la note jouée parmi les cordes qui sonnent ; nouvelle note ≈ 15 ms (plus dans le grave)"],
             ["Moteurs", "Deep, Vintage, Solo, Strings, Harmony (2 intervalles −24 à +24, le 2e coupable)"],
             ["Effets", "Distortion 4 modes pré / post suréchantillonnée x4 · Modulation ±32 cents · Ring Mod 20 Hz – 5 kHz · Bitcrush 44,1 kHz – 441 Hz, 24 – 1 bit · Gated Reverb 0 – 1000 ms ; ordre réglable"],
             ["Presets", "14 d'usine, presets utilisateur en fichiers .preset"],

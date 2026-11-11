@@ -16,7 +16,7 @@ static const SynthPreset factoryPresets[] =
     { "Analog Lead", 0, 100, 0, true, 100, 2, 7, 12, true, 32, 2, 1, true, 18, 40, false, 440, 50, false, 0, 24, true, 320, 16, 0 },
     { "Vintage Keys", 0, 100, 0, true, 90, 1, 7, 12, false, 30, 0, 0, true, 25, 50, false, 440, 50, false, 0, 24, false, 200, 20, 0 },
     { "String Machine",        0, 100,  0,  true, 100, 3,  7,  12,   false, 30, 0, 0,   true,  45, 65,  false, 440, 50,  false, 0, 24,   true, 650, 30,  0 },
-    { "Octave Stack", 0, 100, 0, true, 100, 4, -12, 12, true, 22, 0, 0, false, 20, 40, false, 440, 50, false, 0, 24, false, 300, 25, 0 },
+    { "Octave Stack", 0, 100, 0, true, 100, 4, -12, 12, true, 15, 0, 0, false, 20, 40, false, 440, 50, false, 0, 24, false, 300, 25, 0 },
     { "Broken Radio", 0, 100, 0, true, 100, 2, 7, 12, true, 48, 1, 0, false, 30, 50, false, 440, 50, true, 62, 6, false, 260, 20, 0 },
     { "Ring Bell", 0, 100, 0, true, 100, 1, 7, 12, false, 30, 0, 0, true, 20, 40, true, 870, 60, false, 0, 24, true, 450, 22, 2 },
     { "80s Gated Lead",        0, 100,  0,  true, 100, 2,  7,  12,   true,  20, 0, 1,   true,  28, 55,  false, 440, 50,  false, 0, 24,   true, 480, 55,  0 },

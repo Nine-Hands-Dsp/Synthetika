@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "Layout.h"
 #include "NineHandsMenu.h"
+#include "NineHandsWindow.h"
 #include "NHKnob.h"
 
 //==============================================================================
@@ -48,8 +49,8 @@ public:
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
     static constexpr float baseW = layout::frameW, baseH = layout::frameH;
-    static constexpr int defaultH = 495, maxH = 990;     // format double : hauteur de Ring Think = taille par defaut « 100 % », jusqu'a 200 %
-    static constexpr int numSizes = 4;          // 100 % (defaut) / 125 % / 150 % / 200 %
+    static constexpr int defaultH = 495, maxH = 1114;    // format double : 60 % = 495 (taille minimale), 100 % = 743, jusqu'a 150 %     // format double : hauteur de Ring Think = taille par defaut « 100 % », jusqu'a 200 %
+    static constexpr int numSizes = 3;          // 60 % (defaut) / 75 % / 100 %, comme les autres pedales doubles
     static int sizeHeight (int idx);
     void setScaledHeight (int h);
     void forceRenderScale (float sc) { forcedScale = sc; rebuildCaches (sc); }
@@ -81,6 +82,9 @@ private:
     void drawFootswitch (juce::Graphics&);
 
     void showContextMenu (int learnIdx);
+public:
+    juce::PopupMenu buildContextMenu (int learnIdx = -1);   // menu clic droit (aussi pour l'outil de controle des menus)
+private:
     void showPresetMenu();
     void askSavePreset();
     void askDeletePreset();
@@ -92,6 +96,7 @@ private:
 
     SynthetikaProcessor& proc;
     NineHandsMenu::MenuLnf menuLnf;
+    NineHandsWindow::HostLock hostLock;    // fenetre du DAW : jamais sous 60 %, jamais au-dela de 150 %
     juce::Typeface::Ptr boldFace, medFace;
     juce::Image background, bgScaled, columns[3], columnsScaled[3];
     juce::Image keyEngUp[5], keyEngDn[5], keyModeUp, keyModeDn, swOnOff, swOnOn, swPPOff, swPPOn, fsRefl;

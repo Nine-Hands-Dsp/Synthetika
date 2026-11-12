@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.22)
 set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "")
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "")
 
-project(Synthetika VERSION 1.2.1)
+project(Synthetika VERSION 1.3.0)
 
 if(DEFINED JUCE_DIR)
   add_subdirectory(${JUCE_DIR} juce)
@@ -37,6 +37,17 @@ juce_add_plugin(Synthetika
 
 target_sources(Synthetika PRIVATE PluginProcessor.cpp PluginEditor.cpp)
 
+
+# verrou de taille de la fenetre du DAW (jamais sous 60 %, jamais au-dela de 150 %)
+if(APPLE)
+  target_sources(Synthetika PRIVATE WindowMinSize.mm)
+  target_link_libraries(Synthetika PRIVATE "-framework Cocoa")
+else()
+  target_sources(Synthetika PRIVATE WindowMinSize.cpp)
+endif()
+if(WIN32)
+  target_link_libraries(Synthetika PRIVATE comctl32 user32)
+endif()
 if(MSVC)
   set_source_files_properties(PluginProcessor.cpp PROPERTIES COMPILE_OPTIONS "/fp:fast")
 else()

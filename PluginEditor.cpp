@@ -134,7 +134,7 @@ SynthetikaEditor::SynthetikaEditor (SynthetikaProcessor& p)
     medFace  = Typeface::createSystemTypefaceFor (BinaryData::PoppinsMedium_ttf, BinaryData::PoppinsMedium_ttfSize);
     if (auto xml = XmlDocument::parse (String::fromUTF8 (BinaryData::NineHandsLogoWhite_svg, BinaryData::NineHandsLogoWhite_svgSize)))
         logo = Drawable::createFromSVG (*xml);
-    menuLnf.reg = medFace; menuLnf.med = medFace; menuLnf.bold = boldFace;
+    menuLnf.f = { medFace, medFace, boldFace };
     setLookAndFeel (&menuLnf);
     glowPercent = NineHandsGlow::percent (JucePlugin_Name);
     buildPrint();
@@ -164,12 +164,12 @@ SynthetikaEditor::SynthetikaEditor (SynthetikaProcessor& p)
     const int defaultW = roundToInt ((float) defaultH * baseW / baseH);
     setResizable (true, true);
     setResizeLimits (defaultW, defaultH, roundToInt ((float) maxH * baseW / baseH), maxH);
+    hostLock.setLimits (defaultW, defaultH, roundToInt ((float) maxH * baseW / baseH), maxH);
     if (auto* c = getConstrainer()) c->setFixedAspectRatio ((double) baseW / (double) baseH);
     setOpaque (true);
     // taille a la reouverture : celle de cette instance si elle a deja ete ouverte, sinon la taille par defaut choisie
     // (lue AVANT le premier setSize, qui passe par resized() et ecraserait la valeur memorisee)
-    const int saved = proc.uiHeight.load();
-    const int startH = saved > 0 ? saved : sizeHeight (WigaWindowSize::defaultIndex (JucePlugin_Name, numSizes));
+    const int startH = sizeHeight (NineHandsWindow::openIndex (JucePlugin_Name, proc.uiSizeIdx.load(), numSizes));
     setSize (roundToInt ((float) jlimit (defaultH, maxH, startH) * baseW / baseH), jlimit (defaultH, maxH, startH));
     sizeReady = true;
     rebuildCaches();
@@ -185,7 +185,7 @@ SynthetikaEditor::~SynthetikaEditor()
 
 int SynthetikaEditor::sizeHeight (int idx)
 {
-    const int h[numSizes] = { defaultH, roundToInt (defaultH * 1.25f), roundToInt (defaultH * 1.5f), defaultH * 2 };
+    const int h[numSizes] = { defaultH, 557, 743 };     // 60 / 75 / 100 %
     return h[jlimit (0, numSizes - 1, idx)];
 }
 
@@ -193,6 +193,7 @@ void SynthetikaEditor::setScaledHeight (int h)
 {
     h = jlimit (defaultH, maxH, h);
     setSize (roundToInt ((float) h * baseW / baseH), h);
+    hostLock.enforce();
 }
 
 Rectangle<int> SynthetikaEditor::scaled (Rectangle<float> r) const
@@ -244,7 +245,6 @@ void SynthetikaEditor::resized()
 {
     layoutKnobs();
     if (drum != nullptr) drum->setBounds (getLocalBounds());
-    if (sizeReady) proc.uiHeight = getHeight();
     resizeSettle = 4;
 }
 
@@ -590,7 +590,7 @@ void SynthetikaEditor::useSoftwareRenderer()
     }
    #endif
 }
-void SynthetikaEditor::parentHierarchyChanged() { useSoftwareRenderer(); }
+void SynthetikaEditor::parentHierarchyChanged() { useSoftwareRenderer(); hostLock.track (*this); }
 void SynthetikaEditor::visibilityChanged() { useSoftwareRenderer(); if (isShowing()) repaint(); }
 void SynthetikaEditor::askRepaint (Rectangle<int> r)
 {
@@ -619,6 +619,7 @@ void SynthetikaEditor::timerCallback()
 {
     const double now = Time::getMillisecondCounterHiRes();
     if (getPeer() != lastPeer || now - lastRendererCheckMs > 1000.0) { lastRendererCheckMs = now; useSoftwareRenderer(); }
+    hostLock.track (*this);
     if (resizeSettle > 0 && --resizeSettle == 0) rebuildCaches();
     else if (resizeSettle == 0 && now - lastScaleCheckMs > 250.0)
     {
@@ -928,70 +929,80 @@ void SynthetikaEditor::askDeletePreset()
 //==============================================================================
 // Menu clic droit (design d'Octopus, ouvert la ou on clique)
 //==============================================================================
-void SynthetikaEditor::showContextMenu (int learnIdx)
+PopupMenu SynthetikaEditor::buildContextMenu (int learnIdx)
 {
+    using namespace NineHandsMenu;
     PopupMenu menu;
-    auto ccText = [this] (int i) { const int cc = proc.ccMap[i].load(); return cc >= 0 ? "CC " + String (cc) : String (CharPointer_UTF8 ("\xe2\x80\x94")); };
+    menu.setLookAndFeel (&menuLnf);
+    auto ccText = [this] (int i) { const int cc = proc.ccMap[i].load(); return cc >= 0 ? "CC " + String (cc) : String ("not assigned"); };
     const int lt = proc.learnTarget.load();
     if (learnIdx >= 0)
     {
+        // menu d'une commande (tronc commun) : en-tete, MIDI Learn, Clear MIDI, Cancel MIDI learn
         const String name = SynthetikaProcessor::learnDef (learnIdx).name;
-        menu.addItem (1000 + learnIdx, "MIDI Learn: " + name + " (" + ccText (learnIdx) + ")", true, lt == learnIdx);
+        addHeader (menu, menuLnf.f, icoKnob, amber, name, "MIDI: " + ccText (learnIdx));
+        menu.addItem (1000 + learnIdx, "MIDI Learn: " + name, true, lt == learnIdx);
         menu.addItem (1100 + learnIdx, "Clear MIDI: " + name, proc.ccMap[learnIdx].load() >= 0);
-        if (lt >= 0) menu.addItem (1200, "Cancel MIDI learn");
-        menu.addSeparator();
+        menu.addItem (1200, "Cancel MIDI learn", lt >= 0);
+        return menu;
     }
-    PopupMenu sizes, defSizes;
-    const char* names[numSizes] = { "100 %", "125 %", "150 %", "200 %" };
-    const int def = WigaWindowSize::defaultIndex (JucePlugin_Name, numSizes);
-    for (int i = 0; i < numSizes; ++i)
-    {
-        sizes.addItem (1 + i, String (names[i]) + (i == def ? "  (default)" : ""), true, std::abs (getHeight() - sizeHeight (i)) <= 2);
-        defSizes.addItem (20 + i, names[i], true, i == def);
-    }
-    sizes.addSeparator(); sizes.addSubMenu ("Default size (new windows)", defSizes);
-    menu.addSubMenu ("Plugin size", sizes);
-    PopupMenu glow;
-    for (int i = 0; i < NineHandsGlow::numSteps; ++i) glow.addItem (40 + i, String (NineHandsGlow::steps[i]) + " %", true, glowPercent == NineHandsGlow::steps[i]);
-    menu.addSubMenu ("Glow", glow);
-    menu.addSeparator();
-    PopupMenu factory;
+
+    addHeader (menu, menuLnf.f, icoPedal, amber, "Synthetika", "Guitar synth  v" + String (JucePlugin_VersionString));
+    PopupMenu factory, load;
     for (int i = 0; i < SynthetikaProcessor::getNumFactoryPresets(); ++i)
-        factory.addItem (100 + i, SynthetikaProcessor::getFactoryPreset (i).name, true, proc.presetIsFactory() && proc.getCurrentProgram() == i);
+        factory.addItem (100 + i, String (i + 1) + ". " + SynthetikaProcessor::getFactoryPreset (i).name, true, proc.presetIsFactory() && proc.getCurrentProgram() == i);
     menu.addSubMenu ("Factory presets", factory);
-    menu.addItem (90, "Save preset...");
+    const auto users = proc.userPresetNames();
+    for (int i = 0; i < users.size(); ++i) load.addItem (2000 + i, users[i], true, ! proc.presetIsFactory() && proc.presetName() == users[i]);
+    if (users.isEmpty()) load.addItem (1999, "(no user preset yet)", false);
+    menu.addSubMenu ("Load user preset", load);
+    menu.addItem (90, "Save user preset...");
+    menu.addSeparator();
+
     PopupMenu order;
     if (auto* c = dynamic_cast<AudioParameterChoice*> (proc.apvts.getParameter ("order")))
         for (int i = 0; i < c->choices.size(); ++i) order.addItem (60 + i, c->choices[i], true, c->getIndex() == i);
     menu.addSubMenu ("Effect order", order);
     menu.addSeparator();
-    PopupMenu settings;
-    settings.addItem (51, "MIDI footswitch latching (127 = on / 0 = off)", true, proc.plain ("midiFsMode") < 0.5f);
-    settings.addItem (52, "MIDI footswitch momentary (toggle each press)", true, proc.plain ("midiFsMode") > 0.5f);
-    menu.addSubMenu ("Settings", settings);
-    PopupMenu midi;
-    for (int i = 0; i < SynthetikaProcessor::numLearn; ++i)
-        midi.addItem (1000 + i, "Learn: " + String (SynthetikaProcessor::learnDef (i).name) + " (" + ccText (i) + ")", true, lt == i);
-    midi.addSeparator();
-    if (lt >= 0) midi.addItem (1200, "Cancel MIDI learn");
-    midi.addItem (1201, "Clear all MIDI assignments");
-    midi.addItem (1202, "CC n+32 = fine (14-bit) for knobs on CC 0-31", false);
-    midi.addItem (1203, "Program Change 1-" + String (SynthetikaProcessor::getNumFactoryPresets()) + " = factory presets", false);
-    menu.addSubMenu ("MIDI", midi);
 
-    menu.setLookAndFeel (&menuLnf);
+    PopupMenu midi;
+    midi.addSectionHeader ("MIDI Learn");
+    for (int i = 0; i < SynthetikaProcessor::numLearn; ++i)
+        midi.addItem (1000 + i, "Learn: " + String (SynthetikaProcessor::learnDef (i).name) + "  (" + ccText (i) + ")", true, lt == i);
+    midi.addSeparator();
+    midi.addItem (1200, "Cancel MIDI learn", lt >= 0);
+    midi.addItem (1201, "Clear all MIDI assignments");
+    midi.addSeparator();
+    NineHandsWindow::addMidiFootswitchMode (midi, proc.plain ("midiFsMode") < 0.5f);
+    midi.addSeparator();
+    NineHandsWindow::addProgramChangeInfo (midi);
+    menu.addSubMenu ("MIDI", midi);
+    menu.addSeparator();
+
+    const char* names[numSizes] = { "60 %", "75 %", "100 %" };
+    const int heights[numSizes] = { sizeHeight (0), sizeHeight (1), sizeHeight (2) };
+    menu.addSubMenu ("Plugin size", NineHandsWindow::sizeMenu (JucePlugin_Name, numSizes, names, heights, getHeight()));
+    menu.addSubMenu ("Glow intensity", NineHandsWindow::glowMenu (glowPercent));
+    return menu;
+}
+
+void SynthetikaEditor::showContextMenu (int learnIdx)
+{
+    auto menu = buildContextMenu (learnIdx);
     menu.showMenuAsync (PopupMenu::Options().withMousePosition(),
-        [safe = Component::SafePointer<SynthetikaEditor> (this)] (int r)
+        [safe = Component::SafePointer<SynthetikaEditor> (this), users = proc.userPresetNames()] (int r)
         {
-            if (safe == nullptr || r == 0) return;
+            if (safe == nullptr || r == 0 || r == 9001) return;
             auto& ed = *safe; auto& pr = ed.proc;
-            if      (r >= 1 && r < 1 + numSizes) ed.setScaledHeight (sizeHeight (r - 1));
-            else if (r >= 20 && r < 20 + numSizes) { WigaWindowSize::setDefaultIndex (JucePlugin_Name, r - 20); ed.setScaledHeight (sizeHeight (r - 20)); }
-            else if (r >= 40 && r < 40 + NineHandsGlow::numSteps) { ed.glowPercent = NineHandsGlow::steps[r - 40]; NineHandsGlow::setPercent (JucePlugin_Name, ed.glowPercent); ed.repaint(); }
-            else if (r == 51 || r == 52) ed.setChoice ("midiFsMode", r - 51);
+            int inst = pr.uiSizeIdx.load();
+            const int sz = NineHandsWindow::handleSize (r, JucePlugin_Name, numSizes, inst);
+            if (sz >= 0) { pr.uiSizeIdx = inst; ed.setScaledHeight (sizeHeight (sz)); return; }
+            if (const int pc = NineHandsWindow::handleGlow (r, JucePlugin_Name)) { ed.glowPercent = pc; ed.repaint(); return; }
+            if (r == NineHandsWindow::idLatch || r == NineHandsWindow::idMomentary) ed.setChoice ("midiFsMode", r == NineHandsWindow::idMomentary ? 1 : 0);
             else if (r >= 60 && r < 66) ed.setChoice ("order", r - 60);
             else if (r == 90) ed.askSavePreset();
             else if (r >= 100 && r < 1000) pr.applyFactoryPreset (r - 100);
+            else if (r >= 2000 && r < 2000 + users.size()) pr.loadUserPreset (users[r - 2000]);
             else if (r >= 1000 && r < 1000 + SynthetikaProcessor::numLearn) pr.learnTarget.store (r - 1000);
             else if (r >= 1100 && r < 1100 + SynthetikaProcessor::numLearn) pr.ccMap[r - 1100].store (-1);
             else if (r == 1200) pr.learnTarget.store (-1);

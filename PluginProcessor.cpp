@@ -430,7 +430,7 @@ void SynthetikaProcessor::getStateInformation (MemoryBlock& dest)
     state.setProperty ("presetName", presetName(), nullptr);
     state.setProperty ("presetFactory", factoryIndex.load(), nullptr);
     state.setProperty ("presetModified", modified.load(), nullptr);
-    state.setProperty ("uiHeight", uiHeight.load(), nullptr);
+    state.setProperty ("uiSize", uiSizeIdx.load(), nullptr);
     for (int i = 0; i < numLearn; ++i) state.setProperty (String ("cc_") + learnDef (i).id, ccMap[i].load(), nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, dest);
 }
@@ -443,6 +443,13 @@ void SynthetikaProcessor::setStateInformation (const void* data, int size)
             auto state = ValueTree::fromXml (*xml);
             for (int i = 0; i < numLearn; ++i) ccMap[i].store (jlimit (-1, 127, (int) state.getProperty (String ("cc_") + learnDef (i).id, -1)));
             uiHeight = (int) state.getProperty ("uiHeight", 0);
+            {
+                // v1.3 : taille du menu ; ancien projet : sa hauteur si c'est une des trois tailles du menu (495 / 557 / 743)
+                int idx = -1;
+                const int hs[3] = { 495, 557, 743 };
+                for (int i = 0; i < 3; ++i) if (uiHeight.load() > 0 && std::abs (uiHeight.load() - hs[i]) <= 2) idx = i;
+                uiSizeIdx = juce::jlimit (-1, 2, (int) state.getProperty ("uiSize", idx));
+            }
             apvts.replaceState (state);
             setName (state.getProperty ("presetName", "Future Funk").toString(), (int) state.getProperty ("presetFactory", 0));
             modified = (bool) state.getProperty ("presetModified", false);

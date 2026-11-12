@@ -86,6 +86,7 @@ public:
 
     // ---------------- affichage ----------------
     std::atomic<float> inLevel { 0.0f }, outLevel { 0.0f }, trackedHz { 0.0f };
+    std::atomic<int> uiSizeIdx { -1 };   // taille choisie au menu pour ce projet (0..2), -1 = taille par defaut choisie
     std::atomic<int> uiHeight { 0 };
 
 private:

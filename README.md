@@ -14,8 +14,6 @@ Windows 11 et macOS (binaire universel).
   <a href="https://github.com/Nine-Hands-Dsp/synthetika/releases/latest"><img alt="Dernière version" src="https://img.shields.io/github/v/release/Nine-Hands-Dsp/synthetika?label=derni%C3%A8re%20version&color=7e62ba"></a>
 </p>
 
-![Synthetika](design/apercu.png)
-
 ## Installation
 
 1. Les boutons ci-dessus téléchargent toujours la dernière version (Release publiée à chaque build de `main`).
